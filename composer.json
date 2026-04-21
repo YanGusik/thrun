@@ -1,2 +1,30 @@
 {
+    "name": "yangusik/thrun",
+    "description": "Async queue worker engine for PHP with native threads + coroutines via TrueAsync.",
+    "type": "library",
+    "license": "MIT",
+    "require": {
+        "php": ">=8.4"
+    },
+    "require-dev": {
+        "testo/testo": "^0.10.2"
+    },
+    "autoload": {
+        "psr-4": {
+            "Thrun\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Thrun\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "test": "vendor/bin/testo"
+    },
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {}
+    },
+    "minimum-stability": "stable"
 }
