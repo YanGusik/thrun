@@ -41,6 +41,19 @@ final class InMemoryTransport implements TransportInterface
         }
     }
 
+    public function tryReceive(): ?Envelope
+    {
+        if ($this->channel->isEmpty()) {
+            return null;
+        }
+
+        try {
+            return $this->channel->recv();
+        } catch (\Async\ChannelException|OperationCanceledException) {
+            return null;
+        }
+    }
+
     public function ack(Envelope $envelope): void
     {
         $this->ackedCount++;

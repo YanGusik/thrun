@@ -14,6 +14,11 @@ interface ReceiverInterface
      */
     public function receive(): ?Envelope;
 
+    /**
+     * Non-blocking. Returns null immediately if no message is available.
+     */
+    public function tryReceive(): ?Envelope;
+
     public function ack(Envelope $envelope): void;
 
     public function reject(Envelope $envelope): void;
