@@ -36,7 +36,7 @@ final class InMemoryTransport implements TransportInterface
     {
         try {
             return $this->channel->recv();
-        } catch (\Async\ChannelException|OperationCanceledException) {
+        } catch (\Async\ChannelException) {
             return null;
         }
     }
@@ -49,7 +49,7 @@ final class InMemoryTransport implements TransportInterface
 
         try {
             return $this->channel->recv();
-        } catch (\Async\ChannelException|OperationCanceledException) {
+        } catch (\Async\ChannelException) {
             return null;
         }
     }
