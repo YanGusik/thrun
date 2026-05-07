@@ -4,12 +4,11 @@ declare(strict_types=1);
 
 namespace Thrun\Worker;
 
-use Async\Channel;
 use Async\OperationCanceledException;
 use Async\ThreadChannel;
 use Async\ThreadChannelException;
 use Thrun\Envelope\Envelope;
-use function Async\spawn;
+use function Async\delay;
 use function sprintf;
 
 final class WorkerThread
@@ -26,51 +25,46 @@ final class WorkerThread
 
     public function run(): void
     {
-        ini_set('memory_limit', '-1'); //TODO: temporary, after delete
+        ini_set('memory_limit', '-1');
 
-        // semaphore logic
-        $sem = new Channel($this->concurrency);
+        $group = new \Async\TaskGroup($this->concurrency);
 
-        for ($i = 0; $i < $this->concurrency; $i++) {
-            $sem->sendAsync(1);
-        }
-
-        while (true) {
-            $sem->recv();
-
-            try {
+        try {
+            while (true) {
                 /** @var Envelope $envelope */
                 $envelope = $this->jobChannel->recv();
-            } catch (ThreadChannelException|OperationCanceledException) {
-                $sem->sendAsync(1);
-                break; // GO TO drain semaphore
-            }
 
-            spawn(function () use ($envelope, $sem): void {
-                try {
-                    $message = $envelope->message;
-                    $handler = $this->handlers[$message::class] ?? null;
+                $group->spawn(function () use ($envelope): void {
+                    try {
+                        $message = $envelope->message;
+                        $handler = $this->handlers[$message::class] ?? null;
 
-                    if ($handler === null) {
-                        throw new \RuntimeException(
-                            sprintf('No handler for "%s"', $message::class),
-                        );
+                        if ($handler === null) {
+                            throw new \RuntimeException(
+                                sprintf('No handler for "%s"', $message::class),
+                            );
+                        }
+
+                        $handler($message);
+                        delay(1000);
+
+                        // Use blocking send for backpressure, it's safe in TaskGroup
+                        $this->resultChannel->send(['ok' => true, 'envelope' => $envelope]);
+                    } catch (\Throwable) {
+                        $this->resultChannel->send(['ok' => false, 'envelope' => $envelope]);
                     }
-
-                    $handler($message);
-
-                    $this->resultChannel->send(['ok' => true, 'envelope' => $envelope]);
-                } catch (\Throwable) {
-                    $this->resultChannel->send(['ok' => false, 'envelope' => $envelope]);
-                } finally {
-                    $sem->sendAsync(1);
-                }
-            });
-        }
-
-        // drain semaphore
-        for ($i = 0; $i < $this->concurrency; $i++) {
-            $sem->recv();
+                });
+            }
+        } catch (ThreadChannelException|OperationCanceledException) {
+            // closed or cancelled
+        } finally {
+            $group->seal();
+            try {
+                // Wait for remaining tasks
+                $group->awaitCompletion();
+            } catch (\Throwable) {
+                // ignore
+            }
         }
     }
 }

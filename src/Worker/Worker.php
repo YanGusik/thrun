@@ -29,7 +29,8 @@ final class Worker
     {
         $this->running = true;
 
-        $capacity      = $this->options->threads * $this->options->concurrency;
+        // Larger capacity to prevent trivial deadlocks
+        $capacity      = max(128, $this->options->threads * $this->options->concurrency * 2);
         $jobChannel    = new ThreadChannel($capacity);
         $resultChannel = new ThreadChannel($capacity);
 
@@ -42,19 +43,21 @@ final class Worker
         for ($i = 0; $i < $this->options->threads; $i++) {
             $threads[] = spawn_thread(
                 static function () use ($jobChannel, $resultChannel, $handlers, $concurrency): void {
-                    new WorkerThread($jobChannel, $resultChannel, $handlers, $concurrency)->run();
+                    (new WorkerThread($jobChannel, $resultChannel, $handlers, $concurrency))->run();
                 },
                 bootloader: $bootloader,
             );
         }
 
-        // read results and ack/reject transport
-        $resultReader = spawn(function () use ($resultChannel): void {
+        $scope = new \Async\Scope();
+
+        // result reader coroutine
+        $scope->spawn(function () use ($resultChannel): void {
             while (true) {
                 try {
                     /** @var array{ok: bool, envelope: Envelope} $result */
                     $result = $resultChannel->recv();
-                } catch (ThreadChannelException) {
+                } catch (ThreadChannelException|\Async\Cancellation) {
                     break;
                 }
 
@@ -66,27 +69,46 @@ final class Worker
             }
         });
 
-        // producer loop
-        while ($this->running) {
-            $envelope = $this->transport->receive();
-
-            if ($envelope === null) {
-                break;
+        // producer loop coroutine
+        $producer = $scope->spawn(function () use ($jobChannel): void {
+            while ($this->running) {
+                try {
+                    $envelope = $this->transport->receive();
+                    if ($envelope === null) {
+                        break;
+                    }
+                    $jobChannel->send($envelope);
+                } catch (\Async\Cancellation) {
+                    break;
+                } catch (\Throwable) {
+                    break;
+                }
             }
+        });
 
-            $jobChannel->send($envelope);
+        try {
+            await($producer);
+        } catch (\Async\Cancellation) {
+            // normal stop
+        } finally {
+            $this->running = false;
+            
+            \Async\protect(function () use ($scope, $jobChannel, $threads, $resultChannel): void {
+                $scope->cancel();
+                
+                $jobChannel->close();
+                foreach ($threads as $thread) {
+                    try {
+                        await($thread);
+                    } catch (\Throwable) {}
+                }
+
+                $resultChannel->close();
+                try {
+                    $scope->awaitCompletion(\Async\timeout(2000));
+                } catch (\Throwable) {}
+            });
         }
-
-        // signal threads to stop and wait for them
-        $jobChannel->close();
-
-        foreach ($threads as $thread) {
-            await($thread);
-        }
-
-        // all threads done and finish reader
-        $resultChannel->close();
-        await($resultReader);
     }
 
     public function stop(): void
@@ -96,7 +118,6 @@ final class Worker
 
     private function detectBootloader(): \Closure
     {
-        // Walk up from this file to find vendor/autoload.php
         $dir = __DIR__;
         for ($i = 0; $i < 6; $i++) {
             $autoload = $dir . '/vendor/autoload.php';
