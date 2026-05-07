@@ -46,7 +46,6 @@ final class WorkerThread
                         }
 
                         $handler($message);
-                        delay(1000);
 
                         // Use blocking send for backpressure, it's safe in TaskGroup
                         $this->resultChannel->send(['ok' => true, 'envelope' => $envelope]);
