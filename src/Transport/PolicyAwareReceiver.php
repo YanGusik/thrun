@@ -17,16 +17,21 @@ final class PolicyAwareReceiver implements ReceiverInterface
     private array $pending = [];
 
     private readonly Channel $released;
+    private readonly Channel $internalChannel;
+    private ?\Async\Scope $backgroundScope = null;
 
     public function __construct(
         private readonly ReceiverInterface       $inner,
         private readonly DispatchPolicyInterface $policy,
     ) {
-        $this->released = new Channel(1);
+        $this->released        = new Channel(128);
+        $this->internalChannel = new Channel(256);
     }
 
     public function receive(): ?Envelope
     {
+        $this->ensureWatchers();
+
         while (true) {
             foreach ($this->pending as $i => $envelope) {
                 if ($this->policy->allows($envelope)) {
@@ -36,31 +41,27 @@ final class PolicyAwareReceiver implements ReceiverInterface
                 }
             }
 
-            if (!empty($this->pending)) {
-                $envelope = $this->inner->tryReceive();
-
-                if ($envelope === null) {
-                    try {
-                        $this->released->recv();
-                    } catch (ChannelException|OperationCanceledException) {
-                        return null;
-                    }
-                    continue;
-                }
-            } else {
-                $envelope = $this->inner->receive();
-
-                if ($envelope === null) {
+            try {
+                $data = $this->internalChannel->recv();
+                if ($data === null) {
                     return null;
                 }
-            }
 
-            if ($this->policy->allows($envelope)) {
-                $this->policy->acquire($envelope);
-                return $envelope;
-            }
+                [$type, $val] = $data;
 
-            $this->pending[] = $envelope;
+                if ($type === 'inner') {
+                    if ($val === null) {
+                        return null;
+                    }
+                    if ($this->policy->allows($val)) {
+                        $this->policy->acquire($val);
+                        return $val;
+                    }
+                    $this->pending[] = $val;
+                }
+            } catch (ChannelException|OperationCanceledException) {
+                return null;
+            }
         }
     }
 
@@ -75,7 +76,6 @@ final class PolicyAwareReceiver implements ReceiverInterface
         }
 
         $envelope = $this->inner->tryReceive();
-
         if ($envelope === null) {
             return null;
         }
@@ -101,5 +101,48 @@ final class PolicyAwareReceiver implements ReceiverInterface
         $this->policy->release($envelope);
         $this->inner->reject($envelope);
         $this->released->sendAsync(true);
+    }
+
+    private function ensureWatchers(): void
+    {
+        if ($this->backgroundScope !== null) {
+            return;
+        }
+
+        $this->backgroundScope = new \Async\Scope();
+
+        // Release watcher
+        $this->backgroundScope->spawn(function (): void {
+            while (true) {
+                try {
+                    $this->released->recv();
+                    $this->internalChannel->send(['released', null]);
+                } catch (OperationCanceledException) {
+                    break;
+                } catch (\Throwable) {
+                    break;
+                }
+            }
+        });
+
+        // Inner watcher
+        $this->backgroundScope->spawn(function (): void {
+            while (true) {
+                try {
+                    $envelope = $this->inner->receive();
+                    $this->internalChannel->send(['inner', $envelope]);
+                    if ($envelope === null) {
+                        break;
+                    }
+                } catch (OperationCanceledException) {
+                    break;
+                } catch (\Throwable) {
+                    try {
+                        $this->internalChannel->send(['inner', null]);
+                    } catch (\Throwable) {}
+                    break;
+                }
+            }
+        });
     }
 }
