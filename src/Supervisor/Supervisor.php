@@ -20,26 +20,42 @@ final class Supervisor
         $crashes        = [];
         $currentBackoff = $this->options->restartBackoff;
 
-        pcntl_async_signals(true);
-
         while (true) {
             /** @var Worker $worker */
             $worker = ($this->workerFactory)();
 
-            pcntl_signal(SIGTERM, static function () use ($worker): void {
-                $worker->stop();
-            });
-            pcntl_signal(SIGINT, static function () use ($worker): void {
-                $worker->stop();
+            $workerCoro = \Async\spawn(fn() => $worker->run());
+
+            $sigCoro = \Async\spawn(function () use ($worker, $workerCoro): void {
+                try {
+                    $signal = \Async\await(\Async\await_any_or_fail([
+                        \Async\signal(\Async\Signal::SIGINT),
+                        \Async\signal(\Async\Signal::SIGTERM),
+                    ]));
+                    
+                    printf("\n[Supervisor] Signal %s received. Stopping worker...\n", $signal->name);
+                    
+                    $worker->stop();
+                    $workerCoro->cancel();
+                } catch (\Throwable $e) {
+                    // ignore
+                }
             });
 
             try {
-                $worker->run();
+                \Async\await($workerCoro);
+                $sigCoro->cancel();
+
+                return;
+            } catch (\Async\Cancellation) {
+                $sigCoro->cancel();
 
                 return;
             } catch (\Throwable $e) {
-                $now       = time();
-                $crashes   = array_values(array_filter(
+                $sigCoro->cancel();
+
+                $now     = time();
+                $crashes = array_values(array_filter(
                     $crashes,
                     static fn(int $t): bool => $now - $t < $this->options->restartWindow,
                 ));
@@ -49,7 +65,7 @@ final class Supervisor
                     throw $e;
                 }
 
-                sleep((int) ceil($currentBackoff));
+                \Async\delay((int) ceil($currentBackoff * 1000));
                 $currentBackoff *= 2.0;
             }
         }
