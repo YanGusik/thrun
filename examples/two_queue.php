@@ -31,13 +31,6 @@ $emails->send(Envelope::wrap(new SendEmailMessage('six@example.com')));
 $notifications->send(Envelope::wrap(new PushNotificationMessage(userId: 1)));
 $notifications->send(Envelope::wrap(new PushNotificationMessage(userId: 2)));
 
-\Async\spawn(function () use ($notifications) {
-    for ($i = 0; $i < 10; $i++) {
-        $notifications->send(Envelope::wrap(new PushNotificationMessage(userId: 3 + $i)));
-        \Async\delay(1000);
-    }
-});
-
 $supervisor = new Supervisor(
     workerFactory: fn() => new Worker(
         transport: new MultiQueueReceiver(
