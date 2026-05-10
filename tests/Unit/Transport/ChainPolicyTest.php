@@ -31,6 +31,8 @@ final class ChainPolicyTest extends AsyncTestCase
         );
 
         Assert::same($receiver->receive() !== null, true);
+
+        $receiver->close();
     }
 
     public function deniesWhenAnyPolicyDenies(): void
@@ -68,6 +70,8 @@ final class ChainPolicyTest extends AsyncTestCase
 
         $e3 = $receiver->receive();
         Assert::same($e3->last(PartitionStamp::class)->key, 'user1');
+
+        $receiver->close();
     }
 
     public function releasesAllPoliciesOnAck(): void
@@ -94,5 +98,7 @@ final class ChainPolicyTest extends AsyncTestCase
         // slot released in all policies - msg2 now allowed
         $e2 = $receiver->receive();
         Assert::same($e2->last(PartitionStamp::class)->key, 'user1');
+
+        $receiver->close();
     }
 }

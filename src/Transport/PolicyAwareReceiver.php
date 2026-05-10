@@ -103,6 +103,12 @@ final class PolicyAwareReceiver implements ReceiverInterface
         $this->released->sendAsync(true);
     }
 
+    public function close(): void
+    {
+        $this->released->close();
+        $this->internalChannel->close();
+    }
+
     private function ensureWatchers(): void
     {
         if ($this->backgroundScope !== null) {

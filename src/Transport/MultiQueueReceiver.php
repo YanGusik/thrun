@@ -119,6 +119,11 @@ final class MultiQueueReceiver implements ReceiverInterface
         }
     }
 
+    public function close(): void
+    {
+        $this->notifications->close();
+    }
+
     private function ensureWatchers(): void
     {
         if ($this->backgroundScope !== null) {

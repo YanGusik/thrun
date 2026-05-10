@@ -93,9 +93,7 @@ final class Worker
         } finally {
             $this->running = false;
             
-            \Async\protect(function () use ($scope, $jobChannel, $threads, $resultChannel): void {
-                $scope->cancel();
-                
+            \Async\protect(function () use ($jobChannel, $threads, $resultChannel, $scope): void {
                 $jobChannel->close();
                 foreach ($threads as $thread) {
                     try {

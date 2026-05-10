@@ -31,6 +31,8 @@ final class MultiQueueReceiverTest extends AsyncTestCase
         Assert::same($receiver->tryReceive()?->last(QueueStamp::class)?->queue, 'b');
         Assert::same($receiver->tryReceive()?->last(QueueStamp::class)?->queue, 'a');
         Assert::same($receiver->tryReceive()?->last(QueueStamp::class)?->queue, 'b');
+
+        $receiver->close();
     }
 
     public function roundRobinFallsBackWhenPreferredIsEmpty(): void
@@ -46,6 +48,8 @@ final class MultiQueueReceiverTest extends AsyncTestCase
         // strategy prefers A, A is empty - falls back to B
         Assert::same($receiver->tryReceive()?->last(QueueStamp::class)?->queue, 'b');
         Assert::same($receiver->tryReceive()?->last(QueueStamp::class)?->queue, 'b');
+
+        $receiver->close();
     }
 
     public function priorityDeliversProportionally(): void
@@ -78,6 +82,8 @@ final class MultiQueueReceiverTest extends AsyncTestCase
             'emails', 'emails', 'emails', 'notifications',
             'emails', 'emails', 'emails', 'notifications',
         ]);
+
+        $receiver->close();
     }
 
     public function priorityFallsBackWhenPreferredIsEmpty(): void
@@ -98,6 +104,8 @@ final class MultiQueueReceiverTest extends AsyncTestCase
 
         // emails preferred but empty - falls back to notifications
         Assert::same($receiver->tryReceive()?->last(QueueStamp::class)?->queue, 'notifications');
+
+        $receiver->close();
     }
 
     public function returnsNullWhenAllQueuesEmpty(): void
@@ -108,5 +116,7 @@ final class MultiQueueReceiverTest extends AsyncTestCase
         ]);
 
         Assert::same($receiver->tryReceive(), null);
+
+        $receiver->close();
     }
 }

@@ -30,6 +30,8 @@ final class PolicyAwareReceiverTest extends AsyncTestCase
         Assert::same($envelope !== null, true);
 
         Assert::same($receiver->receive(), null);
+
+        $receiver->close();
     }
 
     public function buffersMessageWhenConcurrencyLimitReached(): void
@@ -67,6 +69,8 @@ final class PolicyAwareReceiverTest extends AsyncTestCase
 
         // transport empty and closed → null
         Assert::same($receiver->receive(), null);
+
+        $receiver->close();
     }
 
     public function releaseOnReject(): void
@@ -93,5 +97,7 @@ final class PolicyAwareReceiverTest extends AsyncTestCase
 
         $e2 = $receiver->receive();
         Assert::same($e2->last(PartitionStamp::class)->key, 'user1');
+
+        $receiver->close();
     }
 }

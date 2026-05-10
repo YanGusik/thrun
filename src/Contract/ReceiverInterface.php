@@ -22,4 +22,10 @@ interface ReceiverInterface
     public function ack(Envelope $envelope): void;
 
     public function reject(Envelope $envelope): void;
+
+    /**
+     * Close any background resources (channels, scopes, watchers).
+     * After close(), receive() should return null.
+     */
+    public function close(): void;
 }
