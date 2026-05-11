@@ -6,6 +6,7 @@ namespace Thrun\Tests\Unit\Transport;
 
 use Testo\Assert;
 use Thrun\Envelope\Envelope;
+use Thrun\Envelope\Stamp\DelayStamp;
 use Thrun\Tests\AsyncTestCase;
 use Thrun\Tests\Fixture\PingMessage;
 use Thrun\Transport\InMemory\InMemoryTransport;
@@ -85,6 +86,31 @@ final class InMemoryTransportTest extends AsyncTestCase
         Assert::same($transport->receive(), $second);
         // Empty channel: tryReceive is non-blocking
         Assert::same($transport->tryReceive(), null);
+
+        $transport->close();
+    }
+
+    public function delayedMessageNotImmediatelyAvailable(): void
+    {
+        $transport = new InMemoryTransport();
+        $transport->send(Envelope::wrap(new PingMessage(), new DelayStamp(50)));
+
+        // Immediately after send, message should not be available
+        Assert::same($transport->tryReceive(), null);
+
+        $transport->close();
+    }
+
+    public function delayedMessageAvailableAfterDelay(): void
+    {
+        $transport = new InMemoryTransport();
+        $transport->send(Envelope::wrap(new PingMessage(), new DelayStamp(100)));
+
+        \Async\delay(150);
+
+        $received = $transport->receive();
+        Assert::same($received !== null, true);
+        Assert::same($received->message::class, PingMessage::class);
 
         $transport->close();
     }

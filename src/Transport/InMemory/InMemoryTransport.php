@@ -9,14 +9,18 @@ use Async\ChannelException;
 use Async\OperationCanceledException;
 use Thrun\Contract\TransportInterface;
 use Thrun\Envelope\Envelope;
+use Thrun\Envelope\Stamp\DelayStamp;
 
 final class InMemoryTransport implements TransportInterface
 {
     // for unit tests
     public int $ackedCount    = 0;
     public int $rejectedCount = 0;
+    /** @var Envelope[] */
+    public array $sentEnvelopes = [];
 
     private Channel $channel;
+    private ?\Async\Scope $delayScope = null;
 
     public function __construct(int $capacity = 100)
     {
@@ -29,6 +33,22 @@ final class InMemoryTransport implements TransportInterface
      */
     public function send(Envelope $envelope): void
     {
+        $this->sentEnvelopes[] = $envelope;
+
+        $delayStamp = $envelope->last(DelayStamp::class);
+        if ($delayStamp !== null && $delayStamp->delayMs > 0) {
+            $this->delayScope ??= new \Async\Scope();
+            $this->delayScope->spawn(function () use ($envelope, $delayStamp): void {
+                \Async\delay($delayStamp->delayMs);
+                try {
+                    $this->channel->send($envelope);
+                } catch (\Async\ChannelException) {
+                    // channel closed while waiting
+                }
+            });
+            return;
+        }
+
         $this->channel->send($envelope);
     }
 
@@ -64,8 +84,14 @@ final class InMemoryTransport implements TransportInterface
         $this->rejectedCount++;
     }
 
+    public function isEmpty(): bool
+    {
+        return $this->channel->isEmpty();
+    }
+
     public function close(): void
     {
+        $this->delayScope?->cancel();
         $this->channel->close();
     }
 }

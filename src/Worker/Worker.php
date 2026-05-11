@@ -7,7 +7,12 @@ namespace Thrun\Worker;
 use Async\ThreadChannel;
 use Async\ThreadChannelException;
 use Thrun\Contract\ReceiverInterface;
+use Thrun\Contract\SenderInterface;
 use Thrun\Envelope\Envelope;
+use Thrun\Envelope\Stamp\DelayStamp;
+use Thrun\Envelope\Stamp\ErrorDetailsStamp;
+use Thrun\Envelope\Stamp\RetryStamp;
+use Thrun\Worker\Retry\NoRetryStrategy;
 use function Async\await;
 use function Async\spawn;
 use function Async\spawn_thread;
@@ -23,6 +28,7 @@ final class Worker
         private readonly ReceiverInterface $transport,
         private readonly array             $handlers,
         private readonly WorkerOptions     $options = new WorkerOptions(),
+        private readonly ?SenderInterface  $failureTransport = null,
     ) {}
 
     public function run(): void
@@ -55,7 +61,7 @@ final class Worker
         $scope->spawn(function () use ($resultChannel): void {
             while (true) {
                 try {
-                    /** @var array{ok: bool, envelope: Envelope} $result */
+                    /** @var array{ok: bool, envelope: Envelope, timedOut?: bool, error?: \Throwable|null} $result */
                     $result = $resultChannel->recv();
                 } catch (ThreadChannelException|\Async\Cancellation) {
                     break;
@@ -64,7 +70,7 @@ final class Worker
                 if ($result['ok']) {
                     $this->transport->ack($result['envelope']);
                 } else {
-                    $this->transport->reject($result['envelope']);
+                    $this->handleFailure($result['envelope'], $result['error'] ?? null);
                 }
             }
         });
@@ -112,6 +118,28 @@ final class Worker
     public function stop(): void
     {
         $this->running = false;
+    }
+
+    private function handleFailure(Envelope $envelope, ?\Throwable $error): void
+    {
+        $retryStamp = $envelope->last(RetryStamp::class);
+        $strategy = $retryStamp?->strategy ?? new NoRetryStrategy();
+        $attempt = $retryStamp?->attempts ?? 0;
+
+        if ($strategy->isRetryable($error ?? new \RuntimeException('Unknown error'), $attempt + 1)) {
+            $this->transport->reject($envelope);
+            $this->transport->send($envelope->with(
+                new RetryStamp(attempts: $attempt + 1, strategy: $strategy),
+                new DelayStamp(delayMs: $strategy->getDelay($attempt + 1)),
+            ));
+        } else {
+            $this->transport->reject($envelope);
+            if ($this->failureTransport !== null && $error !== null) {
+                $this->failureTransport->send($envelope->with(
+                    ErrorDetailsStamp::fromThrowable($error),
+                ));
+            }
+        }
     }
 
     private function detectBootloader(): \Closure

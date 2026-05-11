@@ -7,6 +7,7 @@ namespace Thrun\Transport\Redis;
 use Thrun\Contract\SerializerInterface;
 use Thrun\Contract\TransportInterface;
 use Thrun\Envelope\Envelope;
+use Thrun\Envelope\Stamp\DelayStamp;
 use function Async\delay;
 
 final class RedisTransport implements TransportInterface
@@ -25,6 +26,13 @@ final class RedisTransport implements TransportInterface
     public function send(Envelope $envelope): void
     {
         $payload = $this->serializer->serialize($envelope);
+
+        $delayStamp = $envelope->last(DelayStamp::class);
+        if ($delayStamp !== null && $delayStamp->delayMs > 0) {
+            $this->connection->pushDelayed($this->queue, $payload, $delayStamp->delayMs);
+            return;
+        }
+
         $this->connection->pushReady($this->queue, $payload);
     }
 
@@ -33,6 +41,8 @@ final class RedisTransport implements TransportInterface
         $this->running = true;
 
         while ($this->running) {
+            $this->releaseDelayed();
+
             $raw = $this->connection->popToProcessing($this->queue);
 
             if ($raw !== null) {
@@ -54,6 +64,8 @@ final class RedisTransport implements TransportInterface
 
     public function tryReceive(): ?Envelope
     {
+        $this->releaseDelayed();
+
         $raw = $this->connection->popToProcessing($this->queue);
 
         if ($raw === null) {
@@ -78,6 +90,17 @@ final class RedisTransport implements TransportInterface
 
         if ($stamp instanceof RedisStamp) {
             $this->connection->reject($this->queue, $stamp->rawPayload);
+        }
+    }
+
+    private function releaseDelayed(): void
+    {
+        while (true) {
+            $raw = $this->connection->popDelayed($this->queue);
+            if ($raw === null) {
+                break;
+            }
+            $this->connection->pushReady($this->queue, $raw);
         }
     }
 

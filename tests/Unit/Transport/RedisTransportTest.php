@@ -10,6 +10,7 @@ use Testo\Lifecycle\BeforeTest;
 use Thrun\Envelope\Envelope;
 use Thrun\Serialization\ClassMapMessageTypeResolver;
 use Thrun\Serialization\JsonSerializer;
+use Thrun\Envelope\Stamp\DelayStamp;
 use Thrun\Tests\AsyncTestCase;
 use Thrun\Tests\Fixture\PingMessage;
 use Thrun\Tests\Fixture\SendEmailMessage;
@@ -109,7 +110,7 @@ final class RedisTransportTest extends AsyncTestCase
         Assert::same($processingLen, 0);
     }
 
-    public function rejectMovesToFailed(): void
+    public function rejectRemovesFromProcessingOnly(): void
     {
         $transport = new RedisTransport($this->connection, $this->serializer, 'default');
         $transport->send(Envelope::wrap(new PingMessage()));
@@ -121,7 +122,7 @@ final class RedisTransportTest extends AsyncTestCase
         $failedLen     = self::$redis->lLen('thrun:test:default:failed');
 
         Assert::same($processingLen, 0);
-        Assert::same($failedLen, 1);
+        Assert::same($failedLen, 0);
     }
 
     public function startupReclaimReturnsStuckMessages(): void
@@ -182,5 +183,37 @@ final class RedisTransportTest extends AsyncTestCase
             // also fine
             Assert::same(true, true);
         }
+    }
+
+    public function delayedMessageGoesToSortedSet(): void
+    {
+        $transport = new RedisTransport($this->connection, $this->serializer, 'default');
+        $transport->send(Envelope::wrap(new PingMessage(), new DelayStamp(5000)));
+
+        $readyLen = self::$redis->lLen('thrun:test:default:ready');
+        $delayedLen = self::$redis->zCard('thrun:test:default:delayed');
+
+        Assert::same($readyLen, 0);
+        Assert::same($delayedLen, 1);
+    }
+
+    public function delayedMessageReleasedAfterDelay(): void
+    {
+        $transport = new RedisTransport($this->connection, $this->serializer, 'default');
+        $transport->send(Envelope::wrap(new PingMessage(), new DelayStamp(100)));
+
+        // Immediately: should be in delayed, not ready
+        Assert::same(self::$redis->lLen('thrun:test:default:ready'), 0);
+        Assert::same(self::$redis->zCard('thrun:test:default:delayed'), 1);
+
+        // Wait for delay to pass
+        \Async\delay(200);
+
+        // After receive() triggers releaseDelayed, message should move to ready
+        $envelope = $transport->tryReceive();
+        Assert::same($envelope !== null, true);
+        Assert::same($envelope->message::class, PingMessage::class);
+
+        Assert::same(self::$redis->zCard('thrun:test:default:delayed'), 0);
     }
 }
