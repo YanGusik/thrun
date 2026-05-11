@@ -23,12 +23,12 @@ use Thrun\Worker\WorkerOptions;
 $emails        = new InMemoryTransport();
 $notifications = new InMemoryTransport();
 
-$emails->send(Envelope::wrap(new SendEmailMessage('one@example.com')));
-$emails->send(Envelope::wrap(new SendEmailMessage('two@example.com')));
-$emails->send(Envelope::wrap(new SendEmailMessage('three@example.com')));
-$emails->send(Envelope::wrap(new SendEmailMessage('four@example.com')));
-$emails->send(Envelope::wrap(new SendEmailMessage('five@example.com')));
-$emails->send(Envelope::wrap(new SendEmailMessage('six@example.com')));
+$emails->send(Envelope::wrap(new SendEmailMessage('one@example.com', 'Hello')));
+$emails->send(Envelope::wrap(new SendEmailMessage('two@example.com', 'Hello')));
+$emails->send(Envelope::wrap(new SendEmailMessage('three@example.com', 'Hello')));
+$emails->send(Envelope::wrap(new SendEmailMessage('four@example.com', 'Hello')));
+$emails->send(Envelope::wrap(new SendEmailMessage('five@example.com', 'Hello')));
+$emails->send(Envelope::wrap(new SendEmailMessage('six@example.com', 'Hello')));
 
 $notifications->send(Envelope::wrap(new PushNotificationMessage(userId: 1)));
 $notifications->send(Envelope::wrap(new PushNotificationMessage(userId: 2)));
