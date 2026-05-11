@@ -7,7 +7,7 @@ namespace Thrun\Transport;
 use Thrun\Contract\ReceiverInterface;
 use Thrun\Contract\SchedulingStrategyInterface;
 use Thrun\Envelope\Envelope;
-use Thrun\Transport\Stamp\QueueStamp;
+use Thrun\Envelope\Stamp\QueueStamp;
 use Thrun\Transport\Strategy\RoundRobinStrategy;
 
 final class MultiQueueReceiver implements ReceiverInterface

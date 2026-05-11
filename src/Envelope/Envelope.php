@@ -66,4 +66,18 @@ final class Envelope
     {
         return isset($this->stamps[$stampClass]);
     }
+
+    /**
+     * @return list<StampInterface>
+     */
+    public function allStamps(): array
+    {
+        $result = [];
+        foreach ($this->stamps as $list) {
+            foreach ($list as $stamp) {
+                $result[] = $stamp;
+            }
+        }
+        return $result;
+    }
 }

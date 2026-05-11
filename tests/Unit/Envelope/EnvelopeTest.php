@@ -9,7 +9,7 @@ use Thrun\Envelope\Envelope;
 use Thrun\Envelope\Stamp\PartitionStamp;
 use Thrun\Tests\AsyncTestCase;
 use Thrun\Tests\Fixture\PingMessage;
-use Thrun\Transport\Stamp\QueueStamp;
+use Thrun\Envelope\Stamp\QueueStamp;
 
 final class EnvelopeTest extends AsyncTestCase
 {
@@ -82,5 +82,16 @@ final class EnvelopeTest extends AsyncTestCase
 
         Assert::same($envelope->last(PartitionStamp::class)?->key, 'user1');
         Assert::same($envelope->last(QueueStamp::class)?->queue, 'emails');
+    }
+
+    public function allStampsReturnsEverything(): void
+    {
+        $envelope = Envelope::wrap(new PingMessage())
+            ->with(new PartitionStamp('a'))
+            ->with(new PartitionStamp('b'))
+            ->with(new QueueStamp('emails'));
+
+        $all = $envelope->allStamps();
+        Assert::same(count($all), 3);
     }
 }

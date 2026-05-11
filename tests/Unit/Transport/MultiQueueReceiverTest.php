@@ -10,7 +10,7 @@ use Thrun\Tests\AsyncTestCase;
 use Thrun\Tests\Fixture\PingMessage;
 use Thrun\Transport\InMemory\InMemoryTransport;
 use Thrun\Transport\MultiQueueReceiver;
-use Thrun\Transport\Stamp\QueueStamp;
+use Thrun\Envelope\Stamp\QueueStamp;
 use Thrun\Transport\Strategy\PriorityStrategy;
 
 final class MultiQueueReceiverTest extends AsyncTestCase

@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Thrun\Transport\Stamp;
+namespace Thrun\Envelope\Stamp;
 
 use Thrun\Contract\StampInterface;
 
