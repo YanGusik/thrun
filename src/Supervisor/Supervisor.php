@@ -28,11 +28,10 @@ final class Supervisor
 
             $sigCoro = \Async\spawn(function () use ($worker, $workerCoro): void {
                 try {
-                    $signal = \Async\await(\Async\await_any_or_fail([
+                    $signal = \Async\await_any_or_fail([
                         \Async\signal(\Async\Signal::SIGINT),
                         \Async\signal(\Async\Signal::SIGTERM),
-                    ]));
-                    
+                    ]);
                     printf("\n[Supervisor] Signal %s received. Stopping worker...\n", $signal->name);
                     
                     $worker->stop();
@@ -55,9 +54,10 @@ final class Supervisor
                 $sigCoro->cancel();
 
                 $now     = time();
+                $window = $this->options->restartWindow;
                 $crashes = array_values(array_filter(
                     $crashes,
-                    static fn(int $t): bool => $now - $t < $this->options->restartWindow,
+                    static fn(int $t): bool => $now - $t < $window,
                 ));
                 $crashes[] = $now;
 

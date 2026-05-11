@@ -17,7 +17,7 @@ use function sprintf;
 final class WorkerThread
 {
     /**
-     * @param array<class-string, callable(object): void> $handlers
+     * @param array<class-string, callable(object, ?Acknowledger): void> $handlers
      */
     public function __construct(
         private readonly ThreadChannel $jobChannel,
@@ -38,22 +38,27 @@ final class WorkerThread
                 $envelope = $this->jobChannel->recv();
 
                 $group->spawn(function () use ($envelope): void {
+                    $start = hrtime(true);
+
                     try {
                         $timeoutStamp = $envelope->last(TimeoutStamp::class);
                         $timeoutMs = $timeoutStamp instanceof TimeoutStamp ? $timeoutStamp->timeoutMs : 0;
 
                         if ($timeoutMs > 0) {
-                            $this->runWithTimeout($envelope, $timeoutMs);
+                            $ack = $this->runWithTimeout($envelope, $timeoutMs);
                         } else {
-                            $this->runHandler($envelope);
-                            $this->resultChannel->send(['ok' => true, 'envelope' => $envelope]);
+                            $ack = $this->runHandler($envelope);
                         }
+
+                        $this->sendResult($envelope, $ack, (hrtime(true) - $start) / 1e9);
                     } catch (\Throwable $e) {
                         $this->resultChannel->send([
                             'ok' => false,
                             'envelope' => $envelope,
                             'timedOut' => false,
                             'error' => $e,
+                            'processingTime' => (hrtime(true) - $start) / 1e9,
+                            'wasRetried' => false,
                         ]);
                     }
                 });
@@ -70,37 +75,29 @@ final class WorkerThread
         }
     }
 
-    private function runWithTimeout(Envelope $envelope, int $timeoutMs): void
+    private function runWithTimeout(Envelope $envelope, int $timeoutMs): Acknowledger
     {
         $handlerScope = new \Async\Scope();
-        $future = $handlerScope->spawn(function () use ($envelope): void {
-            $this->runHandler($envelope);
+        $future = $handlerScope->spawn(function () use ($envelope): Acknowledger {
+            return $this->runHandler($envelope);
         });
 
         try {
-            await($future, \Async\timeout($timeoutMs));
-            $this->resultChannel->send(['ok' => true, 'envelope' => $envelope]);
+            return await($future, \Async\timeout($timeoutMs));
         } catch (OperationCanceledException $e) {
             $handlerScope->asNotSafely()->cancel();
-            delay(50); // give finally blocks a chance to run
-            $this->resultChannel->send([
-                'ok' => false,
-                'envelope' => $envelope,
-                'timedOut' => true,
-                'error' => new TimeoutException($timeoutMs),
-            ]);
+            delay(50);
+            $ack = new Acknowledger($envelope);
+            $ack->fail(new TimeoutException($timeoutMs));
+            $ack->markTimedOut();
+            return $ack;
         } catch (\Throwable $e) {
             $handlerScope->asNotSafely()->cancel();
-            $this->resultChannel->send([
-                'ok' => false,
-                'envelope' => $envelope,
-                'timedOut' => false,
-                'error' => $e,
-            ]);
+            throw $e;
         }
     }
 
-    private function runHandler(Envelope $envelope): void
+    private function runHandler(Envelope $envelope): Acknowledger
     {
         $message = $envelope->message;
         $handler = $this->handlers[$message::class] ?? null;
@@ -111,6 +108,50 @@ final class WorkerThread
             );
         }
 
-        $handler($message, $envelope);
+        $ack = new Acknowledger($envelope);
+
+        $ref = new \ReflectionFunction($handler);
+        if ($ref->getNumberOfParameters() >= 2) {
+            $handler($message, $ack);
+        } else {
+            $handler($message);
+            $ack->ack();
+        }
+
+        return $ack;
+    }
+
+    private function sendResult(Envelope $envelope, Acknowledger $ack, float $processingTime): void
+    {
+        if ($ack->isRetried()) {
+            $this->resultChannel->send([
+                'ok' => false,
+                'envelope' => $envelope,
+                'timedOut' => false,
+                'error' => $ack->getFailureError() ?? new \RuntimeException('Retry requested by handler'),
+                'processingTime' => $processingTime,
+                'wasRetried' => true,
+                'retryDelayMs' => $ack->getRetryDelayMs(),
+            ]);
+            return;
+        }
+
+        if ($ack->isFailed()) {
+            $this->resultChannel->send([
+                'ok' => false,
+                'envelope' => $envelope,
+                'timedOut' => $ack->isTimedOut(),
+                'error' => $ack->getFailureError() ?? new \RuntimeException('Failed by handler'),
+                'processingTime' => $processingTime,
+                'wasRetried' => false,
+            ]);
+            return;
+        }
+
+        $this->resultChannel->send([
+            'ok' => true,
+            'envelope' => $envelope,
+            'processingTime' => $processingTime,
+        ]);
     }
 }

@@ -1,0 +1,120 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Thrun\Tests\Unit\Worker;
+
+use Testo\Assert;
+use Thrun\Envelope\Envelope;
+use Thrun\Envelope\Stamp\DelayStamp;
+use Thrun\Envelope\Stamp\RetryStamp;
+use Thrun\Tests\AsyncTestCase;
+use Thrun\Tests\Fixture\PingMessage;
+use Thrun\Transport\InMemory\InMemoryTransport;
+use Thrun\Worker\Acknowledger;
+use Thrun\Worker\Worker;
+use Thrun\Worker\WorkerOptions;
+
+final class WorkerAcknowledgerTest extends AsyncTestCase
+{
+    public function handlerWithAcknowledgerCanRetry(): void
+    {
+        $transport = new InMemoryTransport();
+        $transport->send(Envelope::wrap(new PingMessage()));
+
+        $worker = new Worker(
+            transport: $transport,
+            handlers: [
+                PingMessage::class => static function (PingMessage $msg, Acknowledger $ack): void {
+                    $attempts = $ack->envelope->last(RetryStamp::class)?->attempts ?? 0;
+                    if ($attempts === 0) {
+                        $ack->retry(50);
+                    } else {
+                        $ack->ack();
+                    }
+                },
+            ],
+            options: new WorkerOptions(threads: 1, concurrency: 1),
+        );
+
+        $this->runWorkerAndWait($worker, $transport, expectedAcked: 1, expectedRejected: 1);
+
+        Assert::same($transport->ackedCount, 1);
+        Assert::same($transport->rejectedCount, 1);
+        // Retry envelope has DelayStamp
+        Assert::same(count($transport->sentEnvelopes), 2);
+        Assert::true($transport->sentEnvelopes[1]->has(DelayStamp::class));
+    }
+
+    public function handlerWithAcknowledgerCanFail(): void
+    {
+        $transport = new InMemoryTransport();
+        $failureTransport = new InMemoryTransport();
+        $transport->send(Envelope::wrap(new PingMessage()));
+
+        $worker = new Worker(
+            transport: $transport,
+            handlers: [
+                PingMessage::class => static function (PingMessage $msg, Acknowledger $ack): void {
+                    $ack->fail(new \RuntimeException('Custom fail'));
+                },
+            ],
+            options: new WorkerOptions(threads: 1, concurrency: 1),
+            failureTransport: $failureTransport,
+        );
+
+        $this->runWorkerAndWait($worker, $transport, expectedRejected: 1);
+
+        Assert::same($transport->rejectedCount, 1);
+        Assert::same(count($failureTransport->sentEnvelopes), 1);
+    }
+
+    public function singleParamHandlerStillWorks(): void
+    {
+        $transport = new InMemoryTransport();
+        $transport->send(Envelope::wrap(new PingMessage()));
+
+        $worker = new Worker(
+            transport: $transport,
+            handlers: [PingMessage::class => static fn(PingMessage $msg) => null],
+            options: new WorkerOptions(threads: 1, concurrency: 1),
+        );
+
+        $this->runWorkerAndWait($worker, $transport, expectedAcked: 1);
+
+        Assert::same($transport->ackedCount, 1);
+    }
+
+    private function runWorkerAndWait(
+        Worker $worker,
+        InMemoryTransport $transport,
+        int $expectedAcked = 0,
+        int $expectedRejected = 0,
+    ): void {
+        $coro = \Async\spawn(function () use ($worker): void {
+            $worker->run();
+        });
+
+        $start = hrtime(true);
+        $timeoutNs = 3 * 1e9;
+        while (true) {
+            if ($transport->ackedCount >= $expectedAcked
+                && $transport->rejectedCount >= $expectedRejected
+            ) {
+                \Async\delay(500);
+                if ($transport->ackedCount >= $expectedAcked
+                    && $transport->rejectedCount >= $expectedRejected
+                ) {
+                    break;
+                }
+            }
+            if ((hrtime(true) - $start) > $timeoutNs) {
+                break;
+            }
+            \Async\delay(10);
+        }
+
+        $transport->close();
+        \Async\await($coro);
+    }
+}
