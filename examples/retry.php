@@ -16,6 +16,7 @@ use Thrun\Transport\MultiQueueReceiver;
 use Thrun\Transport\Policy\MaxConcurrencyPolicy;
 use Thrun\Transport\PolicyAwareReceiver;
 use Thrun\Transport\Strategy\PriorityStrategy;
+use Thrun\Worker\Acknowledger;
 use Thrun\Worker\Retry\FixedDelayStrategy;
 use Thrun\Worker\Worker;
 use Thrun\Worker\WorkerOptions;
@@ -33,8 +34,8 @@ $supervisor = new Supervisor(
     workerFactory: fn() => new Worker(
         transport: $emails,
         handlers: [
-            SendEmailMessage::class => function (SendEmailMessage $m, Envelope $envelope) {
-                $attempt = $envelope->last(RetryStamp::class)?->attempts ?? 0;
+            SendEmailMessage::class => function (SendEmailMessage $m, Acknowledger $ack) {
+                $attempt = $ack->envelope->last(RetryStamp::class)?->attempts ?? 0;
 
                 $t = date("H:i:s");
                 $random = rand(1, 2);
