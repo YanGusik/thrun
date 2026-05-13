@@ -179,7 +179,7 @@ final class RedisTransportTest extends AsyncTestCase
         try {
             $result = \Async\await($coro);
             Assert::same($result, null);
-        } catch (\Async\Cancellation) {
+        } catch (\Cancellation) {
             // also fine
             Assert::same(true, true);
         }

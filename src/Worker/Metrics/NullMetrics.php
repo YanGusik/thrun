@@ -17,4 +17,8 @@ final class NullMetrics implements MetricsInterface
     public function incrementTimedOut(): void {}
 
     public function recordProcessingTime(float $seconds): void {}
+
+    public function incrementActive(): void {}
+
+    public function decrementActive(): void {}
 }

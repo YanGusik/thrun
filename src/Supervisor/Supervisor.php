@@ -61,7 +61,7 @@ final class Supervisor
             try {
                 await($this->workerCoro);
                 return;
-            } catch (\Async\Cancellation) {
+            } catch (\Cancellation) {
                 return;
             } catch (Throwable $e) {
                 error_log('[Thrun Supervisor] Caught ' . get_class($e) . ': ' . $e->getMessage());

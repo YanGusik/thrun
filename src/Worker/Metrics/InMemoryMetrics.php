@@ -12,6 +12,7 @@ final class InMemoryMetrics implements MetricsInterface
     public int $failed = 0;
     public int $retried = 0;
     public int $timedOut = 0;
+    public int $active = 0;
 
     /** @var list<float> */
     public array $processingTimes = [];
@@ -39,6 +40,16 @@ final class InMemoryMetrics implements MetricsInterface
     public function recordProcessingTime(float $seconds): void
     {
         $this->processingTimes[] = $seconds;
+    }
+
+    public function incrementActive(): void
+    {
+        $this->active++;
+    }
+
+    public function decrementActive(): void
+    {
+        $this->active = max(0, $this->active - 1);
     }
 
     public function averageTime(): float

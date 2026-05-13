@@ -119,6 +119,18 @@ final class RedisConnection
     /**
      * Delete all keys for a queue (useful in tests).
      */
+    public function pendingCount(string $queue): int
+    {
+        return (int) $this->redis->lLen($this->key($queue, 'ready'))
+            + (int) $this->redis->lLen($this->key($queue, 'processing'))
+            + (int) $this->redis->zCard($this->key($queue, 'delayed'));
+    }
+
+    public function activeCount(string $queue): int
+    {
+        return (int) $this->redis->lLen($this->key($queue, 'processing'));
+    }
+
     public function purge(string $queue): void
     {
         foreach (['ready', 'processing', 'delayed', 'failed'] as $suffix) {

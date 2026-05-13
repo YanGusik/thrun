@@ -13,6 +13,7 @@ use function Async\delay;
 final class RedisTransport implements TransportInterface
 {
     private bool $running = false;
+    private bool $reclaimed = false;
 
     public function __construct(
         private readonly RedisConnection $connection,
@@ -21,6 +22,7 @@ final class RedisTransport implements TransportInterface
     ) {
         // Startup reclaim: return any stuck messages from processing back to ready
         $this->connection->reclaimProcessing($this->queue);
+        $this->reclaimed = true;
     }
 
     public function send(Envelope $envelope): void
@@ -39,6 +41,11 @@ final class RedisTransport implements TransportInterface
     public function receive(): ?Envelope
     {
         $this->running = true;
+
+        if (!$this->reclaimed) {
+            $this->connection->reclaimProcessing($this->queue);
+            $this->reclaimed = true;
+        }
 
         while ($this->running) {
             $this->releaseDelayed();
@@ -104,9 +111,20 @@ final class RedisTransport implements TransportInterface
         }
     }
 
+    public function pendingCount(): int
+    {
+        return $this->connection->pendingCount($this->queue);
+    }
+
+    public function activeCount(): int
+    {
+        return $this->connection->activeCount($this->queue);
+    }
+
     public function close(): void
     {
         $this->running = false;
+        $this->reclaimed = false;
     }
 
     private function deserialize(string $raw): ?Envelope
