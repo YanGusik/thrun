@@ -5,14 +5,31 @@ declare(strict_types=1);
 namespace Thrun\Supervisor;
 
 use Closure;
+use Async\Coroutine;
+use Async\Signal;
+use Throwable;
 use Thrun\Worker\Worker;
+use function Async\await;
+use function Async\await_any_or_fail;
+use function Async\signal;
+use function Async\spawn;
 
 final class Supervisor
 {
+    private Coroutine $workerCoro;
+    private Coroutine $sigCoro;
+    private Worker $worker;
+
     public function __construct(
         private readonly Closure $workerFactory,
         private readonly SupervisorOptions $options = new SupervisorOptions(),
     ) {
+    }
+
+    public function stop(): void
+    {
+        $this->workerCoro->cancel();
+        $this->sigCoro->cancel();
     }
 
     public function run(): void
@@ -22,36 +39,32 @@ final class Supervisor
 
         while (true) {
             /** @var Worker $worker */
-            $worker = ($this->workerFactory)();
+            $this->worker = ($this->workerFactory)();
 
-            $workerCoro = \Async\spawn(fn() => $worker->run());
+            $this->workerCoro = spawn(fn() => $this->worker->run());
 
-            $sigCoro = \Async\spawn(function () use ($worker, $workerCoro): void {
+            $this->sigCoro = spawn(function (): void {
                 try {
-                    $signal = \Async\await_any_or_fail([
-                        \Async\signal(\Async\Signal::SIGINT),
-                        \Async\signal(\Async\Signal::SIGTERM),
+                    $signal = await_any_or_fail([
+                        signal(Signal::SIGINT),
+                        signal(Signal::SIGTERM),
                     ]);
                     printf("\n[Supervisor] Signal %s received. Stopping worker...\n", $signal->name);
-                    
-                    $worker->stop();
-                    $workerCoro->cancel();
-                } catch (\Throwable $e) {
-                    // ignore
+
+                    $this->worker->stop();
+                    $this->sigCoro->cancel();
+                } catch (Throwable $e) {
+                    printf("\n[Supervisor] Signal error. Message: %s [%s]\n", $e->getMessage(), get_class($e));
                 }
             });
 
             try {
-                \Async\await($workerCoro);
-                $sigCoro->cancel();
-
+                await($this->workerCoro);
                 return;
             } catch (\Async\Cancellation) {
-                $sigCoro->cancel();
-
                 return;
-            } catch (\Throwable $e) {
-                $sigCoro->cancel();
+            } catch (Throwable $e) {
+                error_log('[Thrun Supervisor] Caught ' . get_class($e) . ': ' . $e->getMessage());
 
                 $now     = time();
                 $window = $this->options->restartWindow;
@@ -67,6 +80,8 @@ final class Supervisor
 
                 \Async\delay((int) ceil($currentBackoff * 1000));
                 $currentBackoff *= 2.0;
+            } finally {
+                $this->sigCoro->cancel();
             }
         }
     }
