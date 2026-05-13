@@ -70,8 +70,10 @@ final class Worker
 
         try {
             await($producer);
-        } catch (\Cancellation|\Async\ThreadChannelException) {
+        } catch (\Cancellation|\Async\ThreadChannelException $e) {
             error_log('[Thrun Worker] Producer \Cancellation or ThreadChannelException');
+            $cls = get_class($e);
+            error_log("{$cls} {$e->getMessage()} {$e->getTraceAsString()}");
         } catch (\Throwable $e) {
             error_log('[Thrun Worker] Producer coroutine error: '.$e::class.': '.$e->getMessage());
             if ($abnormalError === null) {
@@ -85,6 +87,8 @@ final class Worker
             await($resultReaderCoro);
         } catch (\Cancellation|\Async\ThreadChannelException) {
             error_log('[Thrun Worker] Result reader \Cancellation or ThreadChannelException');
+            $cls = get_class($e);
+            error_log("{$cls} {$e->getMessage()} {$e->getTraceAsString()}");
         } catch (\Throwable $e) {
             error_log('[Thrun Worker] Result reader coroutine error: '.$e::class.': '.$e->getMessage());
             if ($abnormalError === null) {
