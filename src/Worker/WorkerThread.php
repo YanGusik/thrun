@@ -89,7 +89,6 @@ final class WorkerThread
         } catch (\Throwable $e) {
             error_log('[Thrun WorkerThread] Fatal error in thread: ' . $e::class . ': ' . $e->getMessage());
         } finally {
-            $group->seal();
             try {
                 $group->awaitCompletion();
             } catch (\Throwable) {
