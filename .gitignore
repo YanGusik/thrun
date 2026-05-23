@@ -33,5 +33,5 @@ docs
 
 # Benchmarks (not part of the package)
 /bench/
-compose.yml
-Dockerfile
+#compose.yml
+#Dockerfile
