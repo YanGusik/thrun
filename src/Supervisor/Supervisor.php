@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace Thrun\Supervisor;
 
+use Cancellation;
 use Closure;
 use Async\Coroutine;
 use Async\Signal;
 use Throwable;
+use Thrun\Exception\AllThreadDiedException;
 use Thrun\Worker\Worker;
 use function Async\await;
 use function Async\await_any_or_fail;
@@ -38,37 +40,34 @@ final class Supervisor
         $currentBackoff = $this->options->restartBackoff;
 
         while (true) {
+            echo "main\n";
             /** @var Worker $worker */
             $this->worker = ($this->workerFactory)();
 
-            $this->workerCoro = spawn(fn() => $this->worker->run());
-
             $this->sigCoro = spawn(function (): void {
-                try {
-                    $signal = await_any_or_fail([
-                        signal(Signal::SIGINT),
-                        signal(Signal::SIGTERM),
-                    ]);
-                    printf("\n[Supervisor] Signal %s received. Stopping worker...\n", $signal->name);
+                $signal = await_any_or_fail([
+                    signal(Signal::SIGINT),
+                    signal(Signal::SIGTERM),
+                ]);
+                printf("\n[Supervisor] Signal %s received. Stopping worker...\n", $signal->name);
 
-                    $this->worker->stop();
-                    $this->sigCoro->cancel();
-                } catch (Throwable $e) {
-                    printf("\n[Supervisor] Signal error. Message: %s [%s]\n", $e->getMessage(), get_class($e));
-                }
+                $this->worker->stop();
+                $this->sigCoro->cancel();
             });
 
             try {
+                $this->workerCoro = spawn(fn() => $this->worker->run());
                 await($this->workerCoro);
-                return;
-            } catch (\Cancellation) {
-                return;
-            } catch (Throwable $e) {
-                error_log('[Thrun Supervisor] Caught ' . get_class($e) . ': ' . $e->getMessage());
 
-                $now     = time();
-                $window = $this->options->restartWindow;
-                $crashes = array_values(array_filter(
+                return;
+            }
+            catch (\Cancellation) {}
+            catch (Throwable $e) {
+                error_log('[Thrun Supervisor] Caught '.get_class($e).': '.$e->getMessage() .': '.$e->getTraceAsString());
+
+                $now       = time();
+                $window    = $this->options->restartWindow;
+                $crashes   = array_values(array_filter(
                     $crashes,
                     static fn(int $t): bool => $now - $t < $window,
                 ));

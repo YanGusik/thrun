@@ -4,104 +4,79 @@ declare(strict_types=1);
 
 namespace Thrun\Worker;
 
+use Async\Future;
+use Async\FutureState;
 use Async\OperationCanceledException;
+use Async\Scope;
+use Async\Signal;
 use Async\TaskSet;
 use Async\ThreadChannel;
 use Thrun\Envelope\Envelope;
 use Thrun\Envelope\Stamp\TimeoutStamp;
 use Thrun\Exception\TimeoutException;
 use function Async\await;
+use function Async\await_any_or_fail;
 use function Async\delay;
+use function Async\signal;
+use function Async\spawn;
 use function sprintf;
 
 final class WorkerThread
 {
     /**
-     * @param array<class-string, callable(object, ?Acknowledger): void> $handlers
+     * @param  array<class-string, callable(object, ?Acknowledger): void>  $handlers
      */
     /**
-     * @param array<class-string, callable(object, ?Acknowledger): void> $handlers
-     * @param array<int, WorkerMiddlewareInterface> $middleware
+     * @param  array<class-string, callable(object, ?Acknowledger): void>  $handlers
+     * @param  array<int, WorkerMiddlewareInterface>  $middleware
      */
     public function __construct(
-        private readonly ThreadChannel $jobChannel,
+        private readonly Envelope $envelope,
         private readonly ThreadChannel $resultChannel,
-        private readonly array         $handlers,
-        private readonly int           $concurrency,
-        private readonly array         $middleware = [],
-    ) {}
+        private readonly array $handlers,
+        private readonly array $middleware = [],
+    ) {
+    }
 
     public function run(): void
     {
         ini_set('memory_limit', '-1');
+        $this->runTask($this->envelope);
+    }
 
-        echo "count cc:" . $this->concurrency . "\n";
-        $group = new TaskSet($this->concurrency);
+    private function runTask(Envelope $envelope): void
+    {
+        $start = hrtime(true);
 
         try {
-            while (true) {
-                /** @var Envelope $envelope */
-                $envelope = $this->jobChannel->recv();
-                if ($this->jobChannel->isClosed())
-                {
-                    $group->cancel();
-                    throw new \Cancellation("JobChannel is closed");
-                }
+            $timeoutStamp = $envelope->last(TimeoutStamp::class);
+            $timeoutMs    = $timeoutStamp instanceof TimeoutStamp ? $timeoutStamp->timeoutMs : 0;
 
-                $group->spawn(function () use ($envelope): void {
-                    if ($this->jobChannel->isClosed())
-                    {
-                        return;
-                    }
-
-                    $start = hrtime(true);
-
-                    try {
-                        $timeoutStamp = $envelope->last(TimeoutStamp::class);
-                        $timeoutMs = $timeoutStamp instanceof TimeoutStamp ? $timeoutStamp->timeoutMs : 0;
-
-                        if ($timeoutMs > 0) {
-                            $ack = $this->runWithTimeout($envelope, $timeoutMs);
-                        } else {
-                            $ack = $this->runHandler($envelope);
-                        }
-                        $tmp= $this->jobChannel->isClosed() ? 'true' : 'false';
-                        echo "is_closed: $tmp end\n";
-
-                        $this->sendResult($envelope, $ack, (hrtime(true) - $start) / 1e9);
-                    } catch (\Throwable $e) {
-                        echo "throwable in job".get_class($e) . ":" . $e->getMessage() . "\n";
-                        $this->resultChannel->send([
-                            'ok' => false,
-                            'envelope' => $envelope,
-                            'timedOut' => false,
-                            'error' => $e,
-                            'processingTime' => (hrtime(true) - $start) / 1e9,
-                            'wasRetried' => false,
-                        ]);
-                    }
-                });
+            if ($timeoutMs > 0) {
+                $ack = $this->runWithTimeout($envelope, $timeoutMs);
+            } else {
+                $ack = $this->runHandler($envelope);
             }
-        } catch (\Async\ThreadChannelException|OperationCanceledException|\Cancellation) {
-            error_log('[Thrun WorkerThread] stopped.');
-            // closed or cancelled
-//            error_log('[Thrun WorkerThread] ThreadChannelException|OperationCanceledException');
+            echo "job processed!\n";
+
+            $this->sendResult($envelope, $ack, (hrtime(true) - $start) / 1e9);
         } catch (\Throwable $e) {
-            error_log('[Thrun WorkerThread] Fatal error in thread: ' . $e::class . ': ' . $e->getMessage());
-        } finally {
-            try {
-                $group->awaitCompletion();
-            } catch (\Throwable) {
-                error_log('[Thrun WorkerThread] catch (\Throwable)');
-                // ignore
-            }
+            echo "throwable in job".get_class($e).":".$e->getMessage()."\n";
+            $this->resultChannel->send([
+                'ok'             => false,
+                'envelope'       => $envelope,
+                'timedOut'       => false,
+                'error'          => $e,
+                'processingTime' => (hrtime(true) - $start) / 1e9,
+                'wasRetried'     => false,
+            ]);
         }
     }
 
     private function runWithTimeout(Envelope $envelope, int $timeoutMs): Acknowledger
     {
         $handlerScope = new \Async\Scope();
-        $future = $handlerScope->spawn(function () use ($envelope): Acknowledger {
+        $future       = $handlerScope->spawn(function () use ($envelope): Acknowledger {
             return $this->runHandler($envelope);
         });
 
@@ -113,6 +88,7 @@ final class WorkerThread
             $ack = new Acknowledger($envelope);
             $ack->fail(new TimeoutException($timeoutMs));
             $ack->markTimedOut();
+
             return $ack;
         } catch (\Throwable $e) {
             $handlerScope->asNotSafely()->cancel();
@@ -131,7 +107,7 @@ final class WorkerThread
             );
         }
 
-        $ack = new Acknowledger($envelope);
+        $ack      = new Acknowledger($envelope);
         $pipeline = $this->buildPipeline($handler);
         $pipeline($message, $ack);
 
@@ -166,38 +142,40 @@ final class WorkerThread
         try {
             if ($ack->isRetried()) {
                 $this->resultChannel->send([
-                    'ok' => false,
-                    'envelope' => $envelope,
-                    'timedOut' => false,
-                    'error' => $ack->getFailureError() ?? new \RuntimeException('Retry requested by handler'),
+                    'ok'             => false,
+                    'envelope'       => $envelope,
+                    'timedOut'       => false,
+                    'error'          => $ack->getFailureError() ?? new \RuntimeException('Retry requested by handler'),
                     'processingTime' => $processingTime,
-                    'wasRetried' => true,
-                    'retryDelayMs' => $ack->getRetryDelayMs(),
+                    'wasRetried'     => true,
+                    'retryDelayMs'   => $ack->getRetryDelayMs(),
                 ]);
+
                 return;
             }
 
             if ($ack->isFailed()) {
                 $this->resultChannel->send([
-                    'ok' => false,
-                    'envelope' => $envelope,
-                    'timedOut' => $ack->isTimedOut(),
-                    'error' => $ack->getFailureError() ?? new \RuntimeException('Failed by handler'),
+                    'ok'             => false,
+                    'envelope'       => $envelope,
+                    'timedOut'       => $ack->isTimedOut(),
+                    'error'          => $ack->getFailureError() ?? new \RuntimeException('Failed by handler'),
                     'processingTime' => $processingTime,
-                    'wasRetried' => false,
+                    'wasRetried'     => false,
                 ]);
+
                 return;
             }
 
             $this->resultChannel->send([
-                'ok' => true,
-                'envelope' => $envelope,
+                'ok'             => true,
+                'envelope'       => $envelope,
                 'processingTime' => $processingTime,
             ]);
         } catch (\Cancellation|\Async\ThreadChannelException $e) {
 
         } catch (\Throwable $e) {
-            error_log('[Thrun WorkerThread] Failed to send result: ' . $e::class . ': ' . $e->getMessage());
+            error_log('[Thrun WorkerThread] Failed to send result: '.$e::class.': '.$e->getMessage());
         }
     }
 }

@@ -22,7 +22,7 @@ $connected = false;
 foreach (['redis:6379', '127.0.0.1:6379'] as $hostPort) {
     [$host, $port] = explode(':', $hostPort);
     try {
-        $redis->connect($host, (int) $port, 1);
+        @$redis->connect($host, (int) $port, 1);
         $connected = true;
         echo "Connected to Redis at {$hostPort}\n";
         break;
@@ -36,7 +36,7 @@ if (!$connected) {
 }
 
 $connection = new RedisConnection($redis, 'thrun:threaded_valid');
-//$connection->purge('jobs');
+$connection->purge('jobs');
 
 $transport = new RedisTransport(
     $connection,
@@ -69,26 +69,28 @@ $supervisor = new Supervisor(
     options: new SupervisorOptions(),
 );
 
-//$reporter = \Async\spawn(function () use ($metrics, $transport, $count): void {
-//    $startPushed = $count;
-//    while (true) {
+$reporter = \Async\spawn(function () use ($metrics, $transport, $count): void {
+    $startPushed = $count;
+    while (true) {
 //        \Async\delay(1000);
-//        $pending   = $transport->pendingCount();
-//        $active    = $transport->activeCount();
-//        $processed = $metrics->processed;
-//        $failed    = $metrics->failed;
-//        echo sprintf(
-//            "pending: %d  active: %d  processed: %d  failed: %d  (this run pushed: %d)\n",
-//            $pending, $active, $processed, $failed, $startPushed,
-//        );
-//        // For one-shot test: stop when queue is empty and nothing is in-flight
-//        if ($pending === 0 && $active === 0 && $processed > 0) {
-//            echo "All jobs done.\n";
-//            break;
-//        }
-//    }
-//});
+        $pending   = $transport->pendingCount();
+        $active    = $transport->activeCount();
+        $processed = $metrics->processed;
+        $failed    = $metrics->failed;
+        echo sprintf(
+            "pending: %d  active: %d  processed: %d  failed: %d  (this run pushed: %d)\n",
+            $pending, $active, $processed, $failed, $startPushed,
+        );
+        // For one-shot test: stop when queue is empty and nothing is in-flight
+        if ($pending === 0 && $active === 0 && $processed > 0) {
+            echo "All jobs done.\n";
+            break;
+        }
+        \Async\delay(1000);
+    }
+});
 
 $supervisor->run();
+//\Async\delay(1000);
 //$reporter->cancel();
 echo "Supervisor finished.\n";

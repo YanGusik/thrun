@@ -6,9 +6,11 @@ namespace Thrun\Worker;
 
 
 use Async\Scope;
+use Async\TaskSet;
 use Async\ThreadChannel;
-use Async\ThreadChannelException;
+use Async\ThreadPool;
 use Closure;
+use Throwable;
 use Thrun\Contract\MetricsInterface;
 use Thrun\Contract\ReceiverInterface;
 use Thrun\Contract\SenderInterface;
@@ -19,16 +21,13 @@ use Thrun\Envelope\Stamp\RetryStamp;
 use Thrun\Worker\Metrics\NullMetrics;
 use Thrun\Worker\Retry\NoRetryStrategy;
 use function Async\await;
-use function Async\delay;
-use function Async\protect;
-use function Async\spawn;
-use function Async\spawn_thread;
 
 final class Worker
 {
     private bool $running = false;
-    private ?Scope $scope = null;
-    private ?ThreadChannel $jobChannel = null;
+    private Scope $mainScope;
+    private ThreadPool $threadPool;
+    private TaskSet $taskSet;
     private ?ThreadChannel $resultChannel = null;
 
     /**
@@ -41,117 +40,73 @@ final class Worker
         private readonly ?SenderInterface $failureTransport = null,
         private readonly MetricsInterface $metrics = new NullMetrics(),
     ) {
+        $this->mainScope     = new Scope();
+        $capacity            = max(128, $this->options->threads * $this->options->concurrency * 2);
+        $this->resultChannel = new ThreadChannel($capacity);
+
+        $bootloader = $this->options->bootloader ?? $this->detectBootloader();
+
+        $this->threadPool = new ThreadPool(
+            workers: $this->options->threads,
+            bootloader: $bootloader,
+            coroutine: true,
+            concurrency: $this->options->concurrency
+        );
+        $this->taskSet    = new TaskSet(concurrency: 3, scope: $this->mainScope);
     }
 
     public function run(): void
     {
         $this->running = true;
-
-        // Larger capacity to prevent trivial deadlocks
-        $capacity            = max(128, $this->options->threads * $this->options->concurrency * 2);
-        $this->jobChannel    = new ThreadChannel($capacity);
-        $this->resultChannel = new ThreadChannel($capacity);
-
-        $threads = [];
-        $this->fillThreads($threads);
-
-        $this->scope = new Scope();
-
-        $abnormalError = null;
-
-        // health check: if all threads die unexpectedly, crash the worker so supervisor restarts it
-        $healthCheckCoro = $this->scope->spawn($this->healthCheckCoro($threads, $abnormalError));
-
-        // result reader coroutine
-        $resultReaderCoro = $this->scope->spawn($this->resultReaderCoro());
-
-        // producer loop coroutine
-        $producer = $this->scope->spawn($this->producerCoro());
-
         try {
-            await($producer);
-        } catch (\Cancellation|\Async\ThreadChannelException $e) {
-            $cls = get_class($e);
-            error_log("[Thrun Worker][Producer] $cls:{$e->getMessage()}\n[stacktrace]\n{$e->getTraceAsString()}");
-        } catch (\Throwable $e) {
-            error_log('[Thrun Worker] Producer coroutine error: '.$e::class.': '.$e->getMessage());
-            if ($abnormalError === null) {
-                $abnormalError = new \RuntimeException('Worker stopped unexpectedly: '.$e->getMessage(), 0, $e);
-            }
-        } finally {
-            $this->running = false;
-        }
+            $this->taskSet->spawn($this->resultReaderCoro());
+            $this->taskSet->spawn($this->producerCoro());
 
-        try {
-            await($resultReaderCoro);
-        } catch (\Cancellation|\Async\ThreadChannelException) {
-            $cls = get_class($e);
-            error_log("[Thrun Worker][Reader] $cls:{$e->getMessage()}\n[stacktrace]\n{$e->getTraceAsString()}");
-        } catch (\Throwable $e) {
-            error_log('[Thrun Worker] Result reader coroutine error: '.$e::class.': '.$e->getMessage());
-            if ($abnormalError === null) {
-                $abnormalError = new \RuntimeException('Worker stopped unexpectedly: '.$e->getMessage(), 0, $e);
+            foreach ($this->taskSet as [$result, $error]) {
+                if ($error !== null) {
+                    /** @var Throwable $error */
+                    if ($error instanceof \Cancellation) {
+                        continue;
+                    }
+                    $msg = sprintf("[Worker] %s: %s\n[stacktrace]\n%s", get_class($error), $error->getMessage(),
+                        $error->getTraceAsString());
+                    error_log($msg);
+                }
             }
-        } finally {
-            $this->running = false;
-        }
 
-        try {
-            await($healthCheckCoro);
-        } catch (\Cancellation|\Async\ThreadChannelException) {
-        } catch (\Throwable $e) {
-            error_log('[Thrun Worker] Health-check coroutine error: '.$e::class.': '.$e->getMessage());
-            if ($abnormalError === null) {
-                $abnormalError = $e;
-            }
         } finally {
-            $this->running = false;
-        }
-
-        if ($abnormalError !== null) {
-            throw $abnormalError;
+            $this->stop();
         }
     }
 
     public function stop(): void
     {
-        error_log('[Thrun Worker] Stopped');
-        $this->running = false;
-        $this->scope?->cancel();
-        $this->transport->close();
-        $this->jobChannel?->close();
-        $this->resultChannel?->close();
-    }
-
-    private function fillThreads(array &$threads): void
-    {
-        $handlers    = $this->handlers;
-        $concurrency = $this->options->concurrency;
-        $middleware  = $this->options->middleware;
-        $bootloader  = $this->options->bootloader ?? $this->detectBootloader();
-
-        $jobChannel    = $this->jobChannel;
-        $resultChannel = $this->resultChannel;
-
-        for ($i = 0; $i < $this->options->threads; $i++) {
-            $threads[] = spawn_thread(
-                static function () use ($handlers, $concurrency, $middleware, $jobChannel, $resultChannel): void {
-                    (new WorkerThread($jobChannel, $resultChannel, $handlers, $concurrency, $middleware))->run();
-                },
-                bootloader: $bootloader,
-            );
+        if (!$this->running) {
+            return;
         }
+        $this->threadPool->close();
+        $this->mainScope->asNotSafely()->cancel();
+        $this->taskSet->cancel();
+        $this->running = false;
+        $this->resultChannel?->close();
     }
 
     private function producerCoro(): Closure
     {
         return function (): void {
+            $handlers      = $this->handlers;
+            $middleware    = $this->options->middleware;
+            $resultChannel = $this->resultChannel;
+
             while ($this->running) {
                 $envelope = $this->transport->receive();
                 if ($envelope === null) {
                     break;
                 }
-                $this->jobChannel->send($envelope);
+
+                $this->threadPool->submit(function () use ($envelope, $resultChannel, $handlers, $middleware) {
+                    new WorkerThread($envelope, $resultChannel, $handlers, $middleware)->run();
+                });
 
                 $this->metrics->incrementActive();
 
@@ -166,7 +121,7 @@ final class Worker
     {
         return function (): void {
             while (true) {
-                /** @var array{ok: bool, envelope: Envelope, timedOut?: bool, error?: \Throwable|null, processingTime?: float, wasRetried?: bool, retryDelayMs?: int|null} $result */
+                /** @var array{ok: bool, envelope: Envelope, timedOut?: bool, error?: Throwable|null, processingTime?: float, wasRetried?: bool, retryDelayMs?: int|null} $result */
                 $result = $this->resultChannel->recv();
 
                 $this->metrics->decrementActive();
@@ -201,35 +156,7 @@ final class Worker
         };
     }
 
-    private function healthCheckCoro($threads, &$abnormalError): Closure
-    {
-        return function () use ($threads, &$abnormalError): void {
-            while ($this->running) {
-                delay(1000);
-                if (!$this->running) {
-                    return;
-                }
-
-                $allDead = true;
-                foreach ($threads as $thread) {
-                    if (!$thread->isCompleted() && !$thread->isCancelled()) {
-                        $allDead = false;
-                        break;
-                    }
-                }
-                if ($allDead) {
-                    $abnormalError = new \RuntimeException('All worker threads have died');
-                    $this->jobChannel->close();
-                    $this->resultChannel->close();
-                    $this->stop();
-
-                    return;
-                }
-            }
-        };
-    }
-
-    private function handleFailure(Envelope $envelope, ?\Throwable $error, ?int $explicitRetryDelayMs): bool
+    private function handleFailure(Envelope $envelope, ?Throwable $error, ?int $explicitRetryDelayMs): bool
     {
         $retryStamp = $envelope->last(RetryStamp::class);
         $strategy   = $retryStamp?->strategy ?? new NoRetryStrategy();
