@@ -17,7 +17,14 @@ use Thrun\Worker\Worker;
 use Thrun\Worker\WorkerOptions;
 use Thrun\Worker\Metrics\InMemoryMetrics;
 
-$redis = new \Redis();
+$redis = new \Redis([
+    'pool' => [
+        'enabled' => true,
+        'min'     => 0,
+        'max'     => 1,
+        'mux'     => 0,
+    ],
+]);
 $connected = false;
 foreach (['redis:6379', '127.0.0.1:6379'] as $hostPort) {
     [$host, $port] = explode(':', $hostPort);
@@ -36,7 +43,7 @@ if (!$connected) {
 }
 
 $connection = new RedisConnection($redis, 'thrun:threaded_valid');
-$connection->purge('jobs');
+//$connection->purge('jobs');
 
 $transport = new RedisTransport(
     $connection,
@@ -63,7 +70,7 @@ $supervisor = new Supervisor(
                 $ack->ack();
             },
         ],
-        options: new WorkerOptions(threads: 1, concurrency: 1),
+        options: new WorkerOptions(threads: 12, concurrency: 1),
         metrics: $metrics,
     ),
     options: new SupervisorOptions(),

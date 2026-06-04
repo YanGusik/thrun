@@ -39,8 +39,9 @@ final class JsonSerializer implements SerializerInterface
         $payload = [
             'body'    => json_decode(json_encode($envelope->message), true),
             'headers' => [
-                'type'   => $envelope->message::class,
-                'stamps' => $stamps,
+                'type'      => $envelope->type ?? $envelope->message::class,
+                'route_key' => $envelope->routeKey,
+                'stamps'    => $stamps,
             ],
         ];
 
@@ -55,8 +56,15 @@ final class JsonSerializer implements SerializerInterface
             throw new \RuntimeException('Missing message type in envelope headers');
         }
 
-        $messageClass = $this->typeResolver->resolve($decoded->headers->type);
-        $message      = $this->instantiate($messageClass, $decoded->body);
+        $type     = $decoded->headers->type;
+        $routeKey = $decoded->headers->route_key ?? null;
+
+        $resolvedClass = $this->typeResolver->resolve($type);
+        if (class_exists($resolvedClass) && $resolvedClass !== 'stdClass') {
+            $message = $this->instantiate($resolvedClass, $decoded->body);
+        } else {
+            $message = (array) $decoded->body;
+        }
 
         $stamps = [];
         foreach ($decoded->headers->stamps ?? new \stdClass() as $stampClass => $stampData) {
@@ -64,7 +72,7 @@ final class JsonSerializer implements SerializerInterface
             $stamps[]      = $this->instantiate($resolvedClass, $stampData);
         }
 
-        return new Envelope($message, ...$stamps);
+        return new Envelope($message, type: $type, routeKey: $routeKey, stamps: $stamps);
     }
 
     private function instantiate(string $class, \stdClass|array|null $data): object

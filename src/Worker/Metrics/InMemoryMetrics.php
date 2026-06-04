@@ -60,4 +60,11 @@ final class InMemoryMetrics implements MetricsInterface
 
         return array_sum($this->processingTimes) / count($this->processingTimes);
     }
+
+    public function throughput($startTime, $processed): float
+    {
+        $elapsed = (hrtime(true) - $startTime) / 1e9;
+
+        return $elapsed > 0 ? ($this->processed - $processed) / $elapsed : 0.0;
+    }
 }

@@ -9,6 +9,7 @@ use Async\Scope;
 use Async\TaskSet;
 use Async\ThreadChannel;
 use Async\ThreadPool;
+use Async\ThreadPoolException;
 use Closure;
 use Throwable;
 use Thrun\Contract\MetricsInterface;
@@ -49,7 +50,7 @@ final class Worker
         $this->threadPool = new ThreadPool(
             workers: $this->options->threads,
             bootloader: $bootloader,
-            coroutine: true,
+            coroutine: $this->options->concurrency > 0,
             concurrency: $this->options->concurrency
         );
         $this->taskSet    = new TaskSet(concurrency: 3, scope: $this->mainScope);
@@ -68,6 +69,7 @@ final class Worker
                     if ($error instanceof \Cancellation) {
                         continue;
                     }
+                    throw $error;
                     $msg = sprintf("[Worker] %s: %s\n[stacktrace]\n%s", get_class($error), $error->getMessage(),
                         $error->getTraceAsString());
                     error_log($msg);
@@ -104,9 +106,12 @@ final class Worker
                     break;
                 }
 
-                $this->threadPool->submit(function () use ($envelope, $resultChannel, $handlers, $middleware) {
+//                var_dump($envelope, $resultChannel, $handlers, $middleware);
+
+                $this->threadPool->submit(static function () use ($envelope, $resultChannel, $handlers, $middleware) {
                     new WorkerThread($envelope, $resultChannel, $handlers, $middleware)->run();
                 });
+
 
                 $this->metrics->incrementActive();
 

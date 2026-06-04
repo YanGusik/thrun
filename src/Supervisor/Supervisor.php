@@ -40,7 +40,6 @@ final class Supervisor
         $currentBackoff = $this->options->restartBackoff;
 
         while (true) {
-            echo "main\n";
             /** @var Worker $worker */
             $this->worker = ($this->workerFactory)();
 

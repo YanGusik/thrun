@@ -12,17 +12,20 @@ final class Envelope
     private array $stamps = [];
 
     public function __construct(
-        public readonly object $message,
-        StampInterface ...$stamps,
+        public readonly object|array $message,
+        public readonly ?string $type = null,
+        public readonly ?string $routeKey = null,
+        array $stamps = [],
     ) {
         foreach ($stamps as $stamp) {
             $this->stamps[$stamp::class][] = $stamp;
         }
     }
 
-    public static function wrap(object $message, StampInterface ...$stamps): self
+    public static function wrap(object|array $message, StampInterface ...$stamps): self
     {
-        return new self($message, ...$stamps);
+        $type = is_object($message) ? $message::class : 'array';
+        return new self($message, type: $type, stamps: $stamps);
     }
 
     public function with(StampInterface ...$stamps): self

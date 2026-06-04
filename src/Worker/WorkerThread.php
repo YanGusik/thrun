@@ -24,10 +24,10 @@ use function sprintf;
 final class WorkerThread
 {
     /**
-     * @param  array<class-string, callable(object, ?Acknowledger): void>  $handlers
+     * @param  array<string, callable(object|array, ?Acknowledger): void>  $handlers
      */
     /**
-     * @param  array<class-string, callable(object, ?Acknowledger): void>  $handlers
+     * @param  array<string, callable(object|array, ?Acknowledger): void>  $handlers
      * @param  array<int, WorkerMiddlewareInterface>  $middleware
      */
     public function __construct(
@@ -57,11 +57,31 @@ final class WorkerThread
             } else {
                 $ack = $this->runHandler($envelope);
             }
-            echo "job processed!\n";
+//            echo "job processed!\n";
 
             $this->sendResult($envelope, $ack, (hrtime(true) - $start) / 1e9);
         } catch (\Throwable $e) {
-            echo "throwable in job".get_class($e).":".$e->getMessage()."\n";
+
+            $key = $envelope->routeKey ?? $envelope->type ?? gettype($envelope->message);
+
+//            echo json_encode([
+//                    'type' => 'worker_thread_handle',
+//                    'job' => $key,
+//                    'exception' => get_class($e),
+//                    'message' => $e->getMessage(),
+//                    'file' => $e->getFile(),
+//                    'line' => $e->getLine(),
+//                ], JSON_UNESCAPED_SLASHES) . PHP_EOL;
+
+            error_log(sprintf(
+                "[WorkerThread][%s] %s: %s (%s:%d)\n",
+                $key,
+                get_class($e),
+                $e->getMessage(),
+                basename($e->getFile()),
+                $e->getLine()
+            ));
+
             $this->resultChannel->send([
                 'ok'             => false,
                 'envelope'       => $envelope,
@@ -99,12 +119,15 @@ final class WorkerThread
     private function runHandler(Envelope $envelope): Acknowledger
     {
         $message = $envelope->message;
-        $handler = $this->handlers[$message::class] ?? null;
+        $key     = $envelope->routeKey ?? $envelope->type ?? gettype($message);
+        $handler = $this->handlers[$key] ?? null;
 
         if ($handler === null) {
-            throw new \RuntimeException(
-                sprintf('No handler for "%s"', $message::class),
-            );
+            throw new \RuntimeException(sprintf('No handler for "%s"', $key));
+        }
+
+        if (is_string($handler) && class_exists($handler)) {
+            $handler = new $handler();
         }
 
         $ack      = new Acknowledger($envelope);
@@ -116,7 +139,7 @@ final class WorkerThread
 
     private function buildPipeline(callable $handler): \Closure
     {
-        $next = function (object $message, Acknowledger $ack) use ($handler): void {
+        $next = function (object|array $message, Acknowledger $ack) use ($handler): void {
             $ref = $handler instanceof \Closure
                 ? new \ReflectionFunction($handler)
                 : new \ReflectionMethod($handler, '__invoke');
