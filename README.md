@@ -10,14 +10,40 @@ The fastest async queue worker for PHP - one worker process that handles both IO
 
 Measured on WSL2, 8GB RAM, PHP 8.6 TrueAsync fork:
 
-| Scenario | IO throughput | CPU throughput | Stable RSS |
-|---|---|---|---|
-| Horizon 1 worker | 18/s | 73/s | 72 MB |
-| Horizon 12 workers | 210/s | 514/s | 949 MB |
-| TrueAsync 1x100 | 1,869/s | 452/s | 44 MB |
-| TrueAsync 12x10 | 2,355/s | 2,059/s | 54 MB |
+### IO-bound
 
-TrueAsync 12x10 uses **17x less RSS** than Horizon 12 workers, **11x more IO throughput**.
+| Scenario | Jobs | Wall Time | Throughput | Peak RSS |
+|-----------|------:|----------:|-----------:|---------:|
+| Horizon (12 workers) | 1,000 | 12.1 s | 82.6 jobs/s | 872 MB |
+| Horizon (12 workers) | 10,000 | 55.0 s | 181.9 jobs/s | 1,019 MB |
+| Thrun (1 thread, 100 coroutines) | 1,000 | 2.3 s | 433.4 jobs/s | 80 MB |
+| Thrun (1 thread, 100 coroutines) | 10,000 | 6.3 s | 1,580.6 jobs/s | 83.5 MB |
+
+### CPU-bound
+
+| Scenario | Jobs | Wall Time | Throughput | Peak RSS |
+|-----------|------:|----------:|-----------:|---------:|
+| Horizon (12 workers) | 100 | 18.4 s | 5.4 jobs/s | 1,022 MB |
+| Horizon (12 workers) | 1,000 | 162.6 s | 6.2 jobs/s | 1,023 MB |
+| Thrun (12 threads) | 100 | 16.3 s | 6.1 jobs/s | 100.5 MB |
+| Thrun (12 threads) | 1,000 | 139.5 s | 7.2 jobs/s | 101 MB |
+
+### NOOP (pipeline overhead)
+
+| Scenario | Jobs | Wall Time | Throughput | Peak RSS |
+|-----------|------:|----------:|-----------:|---------:|
+| Horizon (12 workers) | 1,000 | 5.0 s | 198.6 jobs/s | 655.5 MB |
+| Thrun (12 threads, 100 coroutines) | 1,000 | 2.3 s | 432.9 jobs/s | 103.4 MB |
+| Thrun (12 threads, 0 coroutines) | 1,000 | 2.3 s | 433.6 jobs/s | 102.8 MB |
+
+### Highlights
+
+| Test | Throughput Gain | Memory Reduction |
+|--------|---------------:|-----------------:|
+| IO (10,000 jobs) | **8.7× faster** | **12.2× less RSS** |
+| CPU (1,000 jobs) | **1.17× faster** | **10.1× less RSS** |
+| NOOP (1,000 jobs) | **2.18× faster** | **6.4× less RSS** |
+
 
 ## Requirements
 
