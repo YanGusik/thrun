@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Thrun\Transport;
 
+use Async\Scope;
 use Thrun\Contract\ReceiverInterface;
 use Thrun\Contract\SchedulingStrategyInterface;
 use Thrun\Envelope\Envelope;
@@ -55,7 +56,7 @@ final class MultiQueueReceiver implements ReceiverInterface
                     return null; // Shutdown
                 }
                 // After notification, loop back to pickFromBuffers
-            } catch (\Async\ChannelException|\Async\OperationCanceledException) {
+            } catch (\Async\ChannelException|\Async\AsyncCancellation) {
                 return null;
             }
         }
@@ -121,6 +122,8 @@ final class MultiQueueReceiver implements ReceiverInterface
 
     public function close(): void
     {
+        echo "CLOSE CALLED IN MultiQueueReceiver.php\n";
+        $this->backgroundScope?->asNotSafely()->cancel();
         $this->notifications->close();
     }
 
@@ -130,7 +133,7 @@ final class MultiQueueReceiver implements ReceiverInterface
             return;
         }
 
-        $this->backgroundScope = new \Async\Scope();
+        $this->backgroundScope = Scope::inherit();
         foreach ($this->receivers as $name => $receiver) {
             $this->backgroundScope->spawn(function () use ($name, $receiver): void {
                 while (true) {
@@ -142,7 +145,7 @@ final class MultiQueueReceiver implements ReceiverInterface
                         }
                         $this->buffers[$name]->enqueue($envelope);
                         $this->notifications->send($name);
-                    } catch (\Async\OperationCanceledException) {
+                    } catch (\Async\AsyncCancellation) {
                         break;
                     } catch (\Throwable) {
                         $this->notifications->send(null);

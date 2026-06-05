@@ -5,9 +5,11 @@ declare(strict_types=1);
 namespace Thrun\Serialization;
 
 use Thrun\Contract\MessageTypeResolverInterface;
+use Thrun\Contract\NormalizableStampInterface;
 use Thrun\Contract\SerializerInterface;
 use Thrun\Contract\StampInterface;
 use Thrun\Envelope\Envelope;
+use Thrun\Envelope\Stamp\MessageIdStamp;
 
 /**
  * JSON serializer for Envelope.
@@ -17,8 +19,11 @@ use Thrun\Envelope\Envelope;
  *   "body": {"id": 123, ...},
  *   "headers": {
  *     "type": "App\\Message\\SendEmail",
+ *     "route_key": "emails",
+ *     "message_id": "abc-123",
  *     "stamps": {
- *       "Thrun\\Envelope\\Stamp\\PartitionStamp": {"key": "user1"}
+ *       "Thrun\\Envelope\\Stamp\\PartitionStamp": [{"key": "user1"}],
+ *       "Thrun\\Envelope\\Stamp\\RetryStamp": [{"attempts": 1, "backoff": [1000, 2000]}]
  *     }
  *   }
  * }
@@ -31,17 +36,30 @@ final class JsonSerializer implements SerializerInterface
 
     public function serialize(Envelope $envelope): string
     {
-        $stamps = [];
+        $stamps       = [];
+        $messageId    = null;
+
         foreach ($envelope->allStamps() as $stamp) {
-            $stamps[$stamp::class] = $stamp;
+            if ($stamp instanceof MessageIdStamp) {
+                $messageId = $stamp->id;
+                continue;
+            }
+
+            $class = $stamp::class;
+            $data  = $stamp instanceof NormalizableStampInterface
+                ? $stamp->normalize()
+                : $this->objectToArray($stamp);
+
+            $stamps[$class][] = $data;
         }
 
         $payload = [
             'body'    => json_decode(json_encode($envelope->message), true),
             'headers' => [
-                'type'      => $envelope->type ?? $envelope->message::class,
-                'route_key' => $envelope->routeKey,
-                'stamps'    => $stamps,
+                'type'       => $envelope->type ?? (is_object($envelope->message) ? $envelope->message::class : 'array'),
+                'route_key'  => $envelope->routeKey,
+                'message_id' => $messageId,
+                'stamps'     => $stamps,
             ],
         ];
 
@@ -50,40 +68,60 @@ final class JsonSerializer implements SerializerInterface
 
     public function deserialize(string $data): Envelope
     {
-        $decoded = json_decode($data, false, 512, JSON_THROW_ON_ERROR);
+        $decoded = json_decode($data, true, 512, JSON_THROW_ON_ERROR);
 
-        if (!isset($decoded->headers->type)) {
+        if (!isset($decoded['headers']['type'])) {
             throw new \RuntimeException('Missing message type in envelope headers');
         }
 
-        $type     = $decoded->headers->type;
-        $routeKey = $decoded->headers->route_key ?? null;
+        $type     = $decoded['headers']['type'];
+        $routeKey = $decoded['headers']['route_key'] ?? null;
 
         $resolvedClass = $this->typeResolver->resolve($type);
         if (class_exists($resolvedClass) && $resolvedClass !== 'stdClass') {
-            $message = $this->instantiate($resolvedClass, $decoded->body);
+            $message = $this->instantiate($resolvedClass, $decoded['body'] ?? []);
         } else {
-            $message = (array) $decoded->body;
+            $message = (array) ($decoded['body'] ?? []);
         }
 
         $stamps = [];
-        foreach ($decoded->headers->stamps ?? new \stdClass() as $stampClass => $stampData) {
-            $resolvedClass = $this->typeResolver->resolve($stampClass);
-            $stamps[]      = $this->instantiate($resolvedClass, $stampData);
+        foreach ($decoded['headers']['stamps'] ?? [] as $stampClass => $stampList) {
+            $resolvedStampClass = $this->typeResolver->resolve($stampClass);
+            foreach ((array) $stampList as $stampData) {
+                $stamps[] = $this->deserializeStamp($resolvedStampClass, (array) $stampData);
+            }
+        }
+
+        if (isset($decoded['headers']['message_id'])) {
+            $stamps[] = new MessageIdStamp($decoded['headers']['message_id']);
         }
 
         return new Envelope($message, type: $type, routeKey: $routeKey, stamps: $stamps);
     }
 
-    private function instantiate(string $class, \stdClass|array|null $data): object
+    private function objectToArray(object $object): array
     {
-        if ($data === null) {
-            $data = new \stdClass();
-        }
-        if (is_array($data)) {
-            $data = (object) $data;
+        return json_decode(json_encode($object), true);
+    }
+
+    /**
+     * @param class-string $class
+     */
+    private function deserializeStamp(string $class, array $data): StampInterface
+    {
+        if (is_a($class, NormalizableStampInterface::class, true)) {
+            return $class::denormalize($data);
         }
 
+        return $this->instantiate($class, $data);
+    }
+
+    /**
+     * @param class-string $class
+     * @param array<string, mixed> $data
+     */
+    private function instantiate(string $class, array $data): object
+    {
         $rc   = new \ReflectionClass($class);
         $ctor = $rc->getConstructor();
 
@@ -94,14 +132,14 @@ final class JsonSerializer implements SerializerInterface
         $args = [];
         foreach ($ctor->getParameters() as $param) {
             $name  = $param->getName();
-            $value = $data->$name ?? null;
+            $value = $data[$name] ?? null;
 
             $type = $param->getType();
             if ($type instanceof \ReflectionNamedType && !$type->isBuiltin()) {
                 $typeName = $type->getName();
-                if (is_a($typeName, \BackedEnum::class, true) && is_string($value)) {
+                if (is_a($typeName, \BackedEnum::class, true) && (is_string($value) || is_int($value))) {
                     $value = $typeName::from($value);
-                } elseif (class_exists($typeName) && $value instanceof \stdClass) {
+                } elseif (class_exists($typeName) && is_array($value)) {
                     $value = $this->instantiate($typeName, $value);
                 }
             } elseif ($type instanceof \ReflectionNamedType && $type->isBuiltin()) {

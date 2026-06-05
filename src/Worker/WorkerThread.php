@@ -61,27 +61,6 @@ final class WorkerThread
 
             $this->sendResult($envelope, $ack, (hrtime(true) - $start) / 1e9);
         } catch (\Throwable $e) {
-
-            $key = $envelope->routeKey ?? $envelope->type ?? gettype($envelope->message);
-
-//            echo json_encode([
-//                    'type' => 'worker_thread_handle',
-//                    'job' => $key,
-//                    'exception' => get_class($e),
-//                    'message' => $e->getMessage(),
-//                    'file' => $e->getFile(),
-//                    'line' => $e->getLine(),
-//                ], JSON_UNESCAPED_SLASHES) . PHP_EOL;
-
-            error_log(sprintf(
-                "[WorkerThread][%s] %s: %s (%s:%d)\n",
-                $key,
-                get_class($e),
-                $e->getMessage(),
-                basename($e->getFile()),
-                $e->getLine()
-            ));
-
             $this->resultChannel->send([
                 'ok'             => false,
                 'envelope'       => $envelope,
