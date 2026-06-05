@@ -1,49 +1,26 @@
 # Thrun
 
-Async queue worker for PHP built on [TrueAsync](https://github.com/true-async) - alternative PHP core that implements true asynchrony by modifying the Zend engine, I/O libraries, database and socket handling.
+> **⚠️ Work in progress**  
+> This library is actively developed. APIs may change between commits.
+
+Async queue worker for PHP built on [TrueAsync](https://github.com/true-async) — an alternative PHP core that implements true asynchrony by modifying the Zend engine, I/O libraries, database and socket handling.
 
 ## Goal
 
-The fastest async queue worker for PHP - one worker process that handles both IO-bound and CPU-bound tasks efficiently. Uses real OS threads instead of forked processes, consumes significantly less memory, and aims to outperform Symfony Messenger and Laravel Horizon.
+The fastest async queue worker for PHP — one worker process that handles both IO-bound and CPU-bound tasks efficiently. Uses real OS threads instead of forked processes, consumes significantly less memory, and aims to outperform Symfony Messenger and Laravel Horizon.
 
 ## Benchmarks
 
 Measured on WSL2, 8GB RAM, PHP 8.6 TrueAsync fork:
 
-### IO-bound
+| Scenario | IO throughput | CPU throughput | Stable RSS |
+|---|---|---|---|
+| Horizon 1 worker | 18/s | 73/s | 72 MB |
+| Horizon 12 workers | 210/s | 514/s | 949 MB |
+| TrueAsync 1x100 | 1,869/s | 452/s | 44 MB |
+| TrueAsync 12x10 | 2,355/s | 2,059/s | 54 MB |
 
-| Scenario | Jobs | Wall Time | Throughput | Peak RSS |
-|-----------|------:|----------:|-----------:|---------:|
-| Horizon (12 workers) | 1,000 | 12.1 s | 82.6 jobs/s | 872 MB |
-| Horizon (12 workers) | 10,000 | 55.0 s | 181.9 jobs/s | 1,019 MB |
-| Thrun (1 thread, 100 coroutines) | 1,000 | 2.3 s | 433.4 jobs/s | 80 MB |
-| Thrun (1 thread, 100 coroutines) | 10,000 | 6.3 s | 1,580.6 jobs/s | 83.5 MB |
-
-### CPU-bound
-
-| Scenario | Jobs | Wall Time | Throughput | Peak RSS |
-|-----------|------:|----------:|-----------:|---------:|
-| Horizon (12 workers) | 100 | 18.4 s | 5.4 jobs/s | 1,022 MB |
-| Horizon (12 workers) | 1,000 | 162.6 s | 6.2 jobs/s | 1,023 MB |
-| Thrun (12 threads) | 100 | 16.3 s | 6.1 jobs/s | 100.5 MB |
-| Thrun (12 threads) | 1,000 | 139.5 s | 7.2 jobs/s | 101 MB |
-
-### NOOP (pipeline overhead)
-
-| Scenario | Jobs | Wall Time | Throughput | Peak RSS |
-|-----------|------:|----------:|-----------:|---------:|
-| Horizon (12 workers) | 1,000 | 5.0 s | 198.6 jobs/s | 655.5 MB |
-| Thrun (12 threads, 100 coroutines) | 1,000 | 2.3 s | 432.9 jobs/s | 103.4 MB |
-| Thrun (12 threads, 0 coroutines) | 1,000 | 2.3 s | 433.6 jobs/s | 102.8 MB |
-
-### Highlights
-
-| Test | Throughput Gain | Memory Reduction |
-|--------|---------------:|-----------------:|
-| IO (10,000 jobs) | **8.7× faster** | **12.2× less RSS** |
-| CPU (1,000 jobs) | **1.17× faster** | **10.1× less RSS** |
-| NOOP (1,000 jobs) | **2.18× faster** | **6.4× less RSS** |
-
+TrueAsync 12x10 uses **17x less RSS** than Horizon 12 workers, **11x more IO throughput**.
 
 ## Requirements
 
@@ -90,13 +67,13 @@ $supervisor->run();
 
 ## Features
 
-**N OS Threads x M Coroutines**
+**N OS Threads × M Coroutines**
 
-Each Worker spawns N real OS threads. Each thread runs a TaskGroup of M coroutines. Total concurrency is N * M. ThreadChannel provides backpressure and blocks when all coroutines are busy.
+Each Worker spawns N real OS threads. Each thread runs a TaskGroup of M coroutines. Total concurrency is N × M. ThreadChannel provides backpressure and blocks when all coroutines are busy.
 
 **Per-Message Timeout (Hard Cancel)**
 
-Attach a TimeoutStamp to any message. If the handler exceeds the limit, it receives a hard cancellation that interrupts blocking operations like `sleep`, `file_get_contents`, or DB queries. `finally` blocks still execute.
+Attach a `TimeoutStamp` to any message. If the handler exceeds the limit, it receives a hard cancellation that interrupts blocking operations like `sleep`, `file_get_contents`, or DB queries. `finally` blocks still execute.
 
 ```php
 use Thrun\Envelope\Stamp\TimeoutStamp;
@@ -109,23 +86,27 @@ $transport->send(Envelope::wrap(
 
 **Retry with Delay**
 
-Attach a RetryStamp with a strategy. Failed messages are retried with a configurable delay.
+Two stamps work together:
+
+- `RetryStamp` — defines the retry policy (backoff intervals and max attempts).
+- `RedeliveryStamp` — added automatically by the worker on every redelivery. Keeps history of attempts and timestamps.
 
 ```php
 use Thrun\Envelope\Stamp\RetryStamp;
-use Thrun\Worker\Retry\ExponentialBackoffStrategy;
+use Thrun\Envelope\Stamp\MessageIdStamp;
 
 $transport->send(Envelope::wrap(
     new SendEmailMessage('user@example.com', 'Hello'),
-    new RetryStamp(strategy: new ExponentialBackoffStrategy(1000, 3)),
+    new RetryStamp(backoff: [1000, 2000, 4000], maxAttempts: 3),
+    new MessageIdStamp('msg-42'),
 ));
 ```
 
-Strategies: `NoRetryStrategy`, `FixedDelayStrategy`, `ExponentialBackoffStrategy`.
+Alternatively, the handler can trigger a retry explicitly via `Acknowledger` without pre-attaching a stamp (see `examples/retry_without_stamp.php`).
 
 **Metrics**
 
-Inject a MetricsInterface to track throughput, failures, retries, timeouts, and average processing time.
+Inject a `MetricsInterface` to track throughput, failures, retries, timeouts, and average processing time.
 
 ```php
 use Thrun\Worker\Metrics\InMemoryMetrics;
@@ -141,12 +122,12 @@ $worker = new Worker(transport: $transport, handlers: $handlers, metrics: $metri
 
 One Worker can serve multiple queues simultaneously with pluggable scheduling:
 
-- `RoundRobinStrategy` - equal distribution
-- `PriorityStrategy` - weighted credits, proportional distribution
+- `RoundRobinStrategy` — equal distribution across queues
+- `PriorityStrategy` — weighted credits, proportional distribution
 
 **Dispatch Policies**
 
-Limit concurrency per partition (tenant, user, etc.) via PartitionStamp:
+Limit concurrency per partition (tenant, user, etc.) via `PartitionStamp`:
 
 ```php
 use Thrun\Envelope\Stamp\PartitionStamp;
@@ -163,11 +144,11 @@ $transport->send(Envelope::wrap($msg, new PartitionStamp('tenant-42')));
 
 **Graceful Shutdown**
 
-Supervisor handles SIGINT/SIGTERM gracefully. `Worker::stop()` cancels the scope and closes the transport. The producer unblocks from `receive()`. Pending jobs complete or timeout.
+Supervisor handles SIGINT/SIGTERM gracefully. `Worker::stop()` cancels the scope and closes internal resources. The producer unblocks from `receive()`. Pending jobs complete or timeout.
 
 **Explicit Acknowledgement**
 
-Handlers can accept an Acknowledger for explicit control:
+Handlers can accept an `Acknowledger` for explicit control:
 
 ```php
 use Thrun\Worker\Acknowledger;
@@ -184,16 +165,54 @@ SendEmailMessage::class => function (SendEmailMessage $m, Acknowledger $ack) {
 
 Methods: `$ack->ack()`, `$ack->retry(int $delayMs)`, `$ack->fail(?Throwable)`.
 
+**Middleware**
+
+Wrap message processing in reusable middleware:
+
+```php
+use Thrun\Middleware\CatchMessageMiddleware;
+
+$worker = new Worker(
+    transport: $transport,
+    handlers: $handlers,
+    options: new WorkerOptions(middleware: [new CatchMessageMiddleware()]),
+);
+```
+
+**Stamps**
+
+Messages carry stamps for cross-cutting concerns:
+
+| Stamp | Purpose |
+|---|---|
+| `DelayStamp` | Defer message delivery |
+| `ErrorDetailsStamp` | Captures exception info on failure |
+| `MessageIdStamp` | Unique message identifier |
+| `PartitionStamp` | Partition key for dispatch policies |
+| `QueueStamp` | Queue name (set by MultiQueueReceiver) |
+| `RedeliveryStamp` | History of redelivery attempts |
+| `RetryStamp` | Retry policy configuration |
+| `TimeoutStamp` | Hard timeout for handler execution |
+
 **Redis Transport**
 
 At-least-once delivery via `LMOVE` from ready to processing. Delayed messages use a sorted set (`ZADD`). Reclaims the processing list on startup for crash recovery.
+
+> Uses a custom TrueAsync-compatible fork of `phpredis` (early stage). Connection pooling **must** be enabled:
 
 ```php
 use Thrun\Transport\Redis\RedisTransport;
 use Thrun\Transport\Redis\RedisConnection;
 use Thrun\Serialization\JsonSerializer;
 
-$redis = new \Redis();
+$redis = new \Redis([
+    'pool' => [
+        'enabled' => true,
+        'min'     => 0,
+        'max'     => 1,
+        'mux'     => 0,
+    ],
+]);
 $redis->connect('redis', 6379);
 
 $transport = new RedisTransport(
@@ -217,30 +236,142 @@ $worker = new Worker(
 );
 ```
 
-Failed messages carry an ErrorDetailsStamp with the exception class, message, code, and trace.
+Failed messages carry an `ErrorDetailsStamp` with the exception class, message, code, and trace.
 
 ## Examples
 
-See the `examples/` directory:
-
-- `one_queue.php` - basic single-queue worker
-- `two_queue.php` - multi-queue with priority
-- `round_robin.php` - round-robin scheduling
-- `priority.php` - priority strategy
-- `max_concurrency.php` - per-partition concurrency limits
-- `retry.php` - retry with fixed delay
-- `metrics.php` - live console metrics reporter
-
 Run examples directly if you have TrueAsync PHP installed, or via Docker (see below).
 
-## Architecture
+### `one_queue.php` — basic single-queue worker
+Sends six emails to one queue and processes them sequentially.
 
-Detailed architecture: `docs/architecture.md`
-Development plan: `docs/development-plan.md`
+```text
+[Email] - one@example.com processed
+[Email] - two@example.com processed
+[Email] - three@example.com processed
+[Email] - four@example.com processed
+[Email] - five@example.com processed
+[Email] - six@example.com processed
+```
+
+### `two_queue.php` — two queues with priority
+Emails and notifications share one worker. Priority strategy favors emails (weight 3) over notifications (weight 1).
+
+```text
+[Email] - one@example.com processed
+[Email] - two@example.com processed
+[Email] - three@example.com processed
+[Notification] - 1 processed
+[Email] - four@example.com processed
+[Email] - five@example.com processed
+[Email] - six@example.com processed
+[Notification] - 2 processed
+```
+
+### `round_robin.php` — round-robin scheduling
+Emails and notifications alternate evenly.
+
+```text
+[Email] - one@example.com processed
+[Notification] - 1 processed
+[Email] - two@example.com processed
+[Notification] - 2 processed
+[Email] - three@example.com processed
+...
+```
+
+### `priority.php` — three queues with credits
+Emails (3), ping (2), and notifications (1) compete. Higher-priority queues get more slots.
+
+```text
+[Email] - one@example.com processed
+[Email] - two@example.com processed
+[Email] - three@example.com processed
+[Notification] - 1 processed
+[Email] - four@example.com processed
+[Email] - five@example.com processed
+[Email] - six@example.com processed
+[Notification] - 2 processed
+[Ping] Pong
+[Ping] Pong
+```
+
+### `max_concurrency.php` — per-partition limits
+Max 2 concurrent jobs per partition. With 2 threads, the worker processes two messages in parallel, then waits for completion before taking the next batch.
+
+```text
+[10:29:46][Email] - one@example.com pending
+[10:29:46][Notification] - 1 pending
+[10:29:46][Email] - one@example.com completed
+[10:29:46][Notification] - 1 completed
+[10:29:47][Email] - two@example.com pending
+[10:29:47][Notification] - 2 pending
+...
+```
+
+### `retry.php` — retry with backoff
+Messages retry on failure with configurable delays. `RetryStamp` sets the policy; `RedeliveryStamp` tracks each attempt.
+
+```text
+[13:44:55][Email][times:0] - one@example.com error
+[13:44:55][Email][times:0] - two@example.com error
+[13:44:55][Email][times:0] - three@example.com error
+[13:44:56][Email][times:1] - one@example.com error
+[13:44:56][Email][times:1] - two@example.com error
+[13:44:56][Email][times:1] - three@example.com error
+[13:44:57][Email][times:2] - one@example.com error
+[13:44:57][Email][times:2] - two@example.com processed
+[13:44:57][Email][times:2] - three@example.com processed
+[13:44:58][Email][times:3] - one@example.com processed
+```
+
+### `retry_without_stamp.php` — explicit retry via Acknowledger
+Handler decides to retry on its own; no `RetryStamp` is attached upfront.
+
+```text
+job retry
+job retry (1,2026-06-05T11:39:44+00:00)(first retry: 1,2026-06-05T11:39:44+00:00)
+job retry (2,2026-06-05T11:39:45+00:00)(first retry: 1,2026-06-05T11:39:44+00:00)
+...
+```
+
+### `middleware.php` — error logging middleware
+`CatchMessageMiddleware` prints every exception with message class and location before retry logic kicks in.
+
+```text
+[WorkerThread][SendEmailMessage:one] Exception: Custom error (middleware.php:32)
+[WorkerThread][SendEmailMessage:two] Exception: Custom error (middleware.php:32)
+...
+```
+
+### `metrics.php` — live metrics reporter
+Real-time console output of processed / failed / retried / timed out counts plus average processing time.
+
+```text
+Thrun Metrics Live (stop: Ctrl+C or wait 15s)
+
+  processed: 5   failed: 5   retried: 5   timed out: 0   avg: 0.04ms
+  processed: 9   failed: 6   retried: 5   timed out: 0   avg: 0.07ms
+...
+Done. Processed: 10, Failed: 6, Retried: 5
+```
+
+### `redis.php` — Redis-backed transport
+Pushes 20 CPU-bound jobs to Redis, then processes them across 12 threads with live progress reporting.
+
+```text
+Connected to Redis at redis:6379
+Pushed 20 jobs
+pending: 20  active: 0  processed: 0  failed: 0  (this run pushed: 20)
+pending: 8   active: 12 processed: 0  failed: 0  (this run pushed: 20)
+...
+All jobs done.
+Supervisor finished.
+```
 
 ## Testing
 
-Tests use `testo`. No mocking of TrueAsync internals - test with `InMemoryTransport` and real async execution.
+Tests use `testo`. No mocking of TrueAsync internals — tests run with `InMemoryTransport` and real async execution.
 
 Some transport tests require Redis running on `localhost:6379`.
 
