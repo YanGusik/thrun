@@ -7,6 +7,7 @@ namespace Thrun\Transport;
 use Async\Channel;
 use Async\ChannelException;
 use Async\OperationCanceledException;
+use Async\Scope;
 use Thrun\Contract\DispatchPolicyInterface;
 use Thrun\Contract\ReceiverInterface;
 use Thrun\Envelope\Envelope;
@@ -115,7 +116,7 @@ final class PolicyAwareReceiver implements ReceiverInterface
             return;
         }
 
-        $this->backgroundScope = new \Async\Scope();
+        $this->backgroundScope = Scope::inherit();
 
         // Release watcher
         $this->backgroundScope->spawn(function (): void {

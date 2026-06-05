@@ -39,6 +39,14 @@ final class Envelope
         return $clone;
     }
 
+    public function withoutAll(string $stampClass): self
+    {
+        $clone = clone $this;
+        unset($clone->stamps[$stampClass]);
+
+        return $clone;
+    }
+
     /**
      * Returns the last stamp of the given type, or null if not present.
      *

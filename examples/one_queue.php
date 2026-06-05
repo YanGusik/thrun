@@ -5,16 +5,10 @@ declare(strict_types=1);
 require_once __DIR__.'/../vendor/autoload.php';
 
 use Thrun\Envelope\Envelope;
-use Thrun\Envelope\Stamp\PartitionStamp;
 use Thrun\Supervisor\Supervisor;
 use Thrun\Supervisor\SupervisorOptions;
-use Thrun\Tests\Fixture\PushNotificationMessage;
 use Thrun\Tests\Fixture\SendEmailMessage;
 use Thrun\Transport\InMemory\InMemoryTransport;
-use Thrun\Transport\MultiQueueReceiver;
-use Thrun\Transport\Policy\MaxConcurrencyPolicy;
-use Thrun\Transport\PolicyAwareReceiver;
-use Thrun\Transport\Strategy\PriorityStrategy;
 use Thrun\Worker\Worker;
 use Thrun\Worker\WorkerOptions;
 

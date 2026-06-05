@@ -18,9 +18,9 @@ use Thrun\Contract\SenderInterface;
 use Thrun\Envelope\Envelope;
 use Thrun\Envelope\Stamp\DelayStamp;
 use Thrun\Envelope\Stamp\ErrorDetailsStamp;
+use Thrun\Envelope\Stamp\RedeliveryStamp;
 use Thrun\Envelope\Stamp\RetryStamp;
 use Thrun\Worker\Metrics\NullMetrics;
-use Thrun\Worker\Retry\NoRetryStrategy;
 use function Async\await;
 
 final class Worker
@@ -163,27 +163,27 @@ final class Worker
 
     private function handleFailure(Envelope $envelope, ?Throwable $error, ?int $explicitRetryDelayMs): bool
     {
-        $retryStamp = $envelope->last(RetryStamp::class);
-        $strategy   = $retryStamp?->strategy ?? new NoRetryStrategy();
-        $attempt    = $retryStamp?->attempts ?? 0;
+        $retryStamp   = $envelope->last(RetryStamp::class);
+        $redeliveries = $envelope->all(RedeliveryStamp::class);
+        $attempt      = array_last($redeliveries)->attempt ?? 0;
 
-        // Explicit retry from handler takes priority over strategy
+        // Explicit retry from handler takes priority over stamp strategy
         if ($explicitRetryDelayMs !== null) {
             $this->transport->reject($envelope);
-            $this->transport->send($envelope->with(
-                new RetryStamp(attempts: $attempt + 1, strategy: $strategy),
-                new DelayStamp(delayMs: $explicitRetryDelayMs),
-            ));
+            $this->transport->send(
+                $this->buildRetryEnvelope($envelope, $explicitRetryDelayMs, $attempt + 1),
+            );
 
             return true;
         }
 
-        if ($strategy->isRetryable($error ?? new \RuntimeException('Unknown error'), $attempt + 1)) {
+        if ($retryStamp instanceof RetryStamp && $retryStamp->isRetryable($attempt + 1)) {
+            $delayMs = $retryStamp->getDelayForAttempt($attempt + 1);
+
             $this->transport->reject($envelope);
-            $this->transport->send($envelope->with(
-                new RetryStamp(attempts: $attempt + 1, strategy: $strategy),
-                new DelayStamp(delayMs: $strategy->getDelay($attempt + 1)),
-            ));
+            $this->transport->send(
+                $this->buildRetryEnvelope($envelope, $delayMs, $attempt + 1),
+            );
 
             return true;
         }
@@ -196,6 +196,25 @@ final class Worker
         }
 
         return false;
+    }
+
+    private function buildRetryEnvelope(Envelope $envelope, int $delayMs, int $nextAttempt): Envelope
+    {
+        $history = $envelope->all(RedeliveryStamp::class);
+        $history[] = new RedeliveryStamp(
+            attempt:   $nextAttempt,
+            retriedAt: (new \DateTimeImmutable())->format(\DateTimeInterface::ATOM),
+        );
+
+        // Symfony-style history capping: keep first + last 9 (10 total)
+        if (count($history) > 10) {
+            $history = array_merge([$history[0]], array_slice($history, -9));
+        }
+
+        return $envelope
+            ->withoutAll(RedeliveryStamp::class)
+            ->with(...$history)
+            ->with(new DelayStamp(delayMs: $delayMs));
     }
 
     private function detectBootloader(): Closure

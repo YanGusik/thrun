@@ -5,30 +5,24 @@ declare(strict_types=1);
 require_once __DIR__.'/../vendor/autoload.php';
 
 use Thrun\Envelope\Envelope;
-use Thrun\Envelope\Stamp\PartitionStamp;
+use Thrun\Envelope\Stamp\MessageIdStamp;
 use Thrun\Envelope\Stamp\RetryStamp;
 use Thrun\Supervisor\Supervisor;
 use Thrun\Supervisor\SupervisorOptions;
-use Thrun\Tests\Fixture\PushNotificationMessage;
 use Thrun\Tests\Fixture\SendEmailMessage;
 use Thrun\Transport\InMemory\InMemoryTransport;
-use Thrun\Transport\MultiQueueReceiver;
-use Thrun\Transport\Policy\MaxConcurrencyPolicy;
-use Thrun\Transport\PolicyAwareReceiver;
-use Thrun\Transport\Strategy\PriorityStrategy;
 use Thrun\Worker\Acknowledger;
-use Thrun\Worker\Retry\FixedDelayStrategy;
 use Thrun\Worker\Worker;
 use Thrun\Worker\WorkerOptions;
 
 $emails = new InMemoryTransport();
 
 $emails->send(Envelope::wrap(new SendEmailMessage('one@example.com', 'Hello'),
-    new RetryStamp(strategy: new FixedDelayStrategy(1000, 3))));
+    new RetryStamp(backoff: [1000], maxAttempts: 3), new MessageIdStamp('one')));
 $emails->send(Envelope::wrap(new SendEmailMessage('two@example.com', 'Hello'),
-    new RetryStamp(strategy: new FixedDelayStrategy(1000, 3))));
+    new RetryStamp(backoff: [1000], maxAttempts: 3), new MessageIdStamp('two')));
 $emails->send(Envelope::wrap(new SendEmailMessage('three@example.com', 'Hello'),
-    new RetryStamp(strategy: new FixedDelayStrategy(1000, 3))));
+    new RetryStamp(backoff: [1000, 2000, 3000], maxAttempts: 3), new MessageIdStamp('three')));
 
 $supervisor = new Supervisor(
     workerFactory: fn() => new Worker(
@@ -36,14 +30,16 @@ $supervisor = new Supervisor(
         handlers: [
             SendEmailMessage::class => function (SendEmailMessage $m, Acknowledger $ack) {
                 $attempt = $ack->envelope->last(RetryStamp::class)?->attempts ?? 0;
+                $id = $ack->envelope->last(MessageIdStamp::class)?->id ?? 0;
 
-                $t = date("H:i:s");
-                $random = rand(1, 2);
+                $t      = date("H:i:s");
+//                $random = rand(1, 2);
+                $random = 1;
                 if ($random === 1) {
-                    print("[$t][Email][times:$attempt] - {$m->to} error\n");
+                    print("[$t][Email][$id][times:$attempt] - {$m->to} error\n");
                     throw new \Exception("Custom error");
                 }
-                print("[$t][Email][times:$attempt] - {$m->to} processed\n");
+                print("[$t][Email][$id][times:$attempt] - {$m->to} processed\n");
             },
         ],
         options: new WorkerOptions(threads: 1, concurrency: 1),

@@ -7,6 +7,7 @@ namespace Thrun\Tests\Unit\Worker;
 use Testo\Assert;
 use Thrun\Envelope\Envelope;
 use Thrun\Envelope\Stamp\DelayStamp;
+use Thrun\Envelope\Stamp\RedeliveryStamp;
 use Thrun\Envelope\Stamp\RetryStamp;
 use Thrun\Tests\AsyncTestCase;
 use Thrun\Tests\Fixture\PingMessage;
@@ -14,6 +15,7 @@ use Thrun\Transport\InMemory\InMemoryTransport;
 use Thrun\Worker\Acknowledger;
 use Thrun\Worker\Worker;
 use Thrun\Worker\WorkerOptions;
+use function Async\await;
 
 final class WorkerAcknowledgerTest extends AsyncTestCase
 {
@@ -26,7 +28,7 @@ final class WorkerAcknowledgerTest extends AsyncTestCase
             transport: $transport,
             handlers: [
                 PingMessage::class => static function (PingMessage $msg, Acknowledger $ack): void {
-                    $attempts = $ack->envelope->last(RetryStamp::class)?->attempts ?? 0;
+                    $attempts = $ack->envelope->last(RedeliveryStamp::class)?->attempt ?? 0;
                     if ($attempts === 0) {
                         $ack->retry(50);
                     } else {
@@ -39,8 +41,11 @@ final class WorkerAcknowledgerTest extends AsyncTestCase
 
         $this->runWorkerAndWait($worker, $transport, expectedAcked: 1, expectedRejected: 1);
 
-        Assert::same($transport->ackedCount, 1);
-        Assert::same($transport->rejectedCount, 1);
+        //var_dump($transport);
+
+
+        Assert::same($transport->ackedCount, 1, 'ackedCount');
+        Assert::same($transport->rejectedCount, 1, 'rejectedCount');
         // Retry envelope has DelayStamp
         Assert::same(count($transport->sentEnvelopes), 2);
         Assert::true($transport->sentEnvelopes[1]->has(DelayStamp::class));
@@ -91,7 +96,7 @@ final class WorkerAcknowledgerTest extends AsyncTestCase
         int $expectedAcked = 0,
         int $expectedRejected = 0,
     ): void {
-        $coro = \Async\spawn(function () use ($worker): void {
+        $coro = \Async\spawn(static function () use ($worker): void {
             $worker->run();
         });
 
@@ -114,7 +119,7 @@ final class WorkerAcknowledgerTest extends AsyncTestCase
             \Async\delay(10);
         }
 
-        $transport->close();
-        \Async\await($coro);
+        $worker->stop();
+        await($coro);
     }
 }
