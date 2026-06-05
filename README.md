@@ -285,15 +285,15 @@ Emails (3), ping (2), and notifications (1) compete. Higher-priority queues get 
 
 ```text
 [Email] - one@example.com processed
+[Ping] Pong
 [Email] - two@example.com processed
 [Email] - three@example.com processed
-[Notification] - 1 processed
+[Ping] Pong
 [Email] - four@example.com processed
 [Email] - five@example.com processed
 [Email] - six@example.com processed
+[Notification] - 1 processed
 [Notification] - 2 processed
-[Ping] Pong
-[Ping] Pong
 ```
 
 ### `max_concurrency.php` — per-partition limits
