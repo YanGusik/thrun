@@ -8,6 +8,9 @@ use Thrun\Contract\SerializerInterface;
 use Thrun\Contract\TransportInterface;
 use Thrun\Envelope\Envelope;
 use Thrun\Envelope\Stamp\DelayStamp;
+use Thrun\Envelope\Stamp\ErrorDetailsStamp;
+use Thrun\Envelope\Stamp\QueueStamp;
+use Thrun\Envelope\UnprocessableMessage;
 use function Async\delay;
 
 final class RedisTransport implements TransportInterface
@@ -27,6 +30,7 @@ final class RedisTransport implements TransportInterface
 
     public function send(Envelope $envelope): void
     {
+        $envelope = $envelope->withoutAll(RedisStamp::class);
         $payload = $this->serializer->serialize($envelope);
 
         $delayStamp = $envelope->last(DelayStamp::class);
@@ -53,14 +57,7 @@ final class RedisTransport implements TransportInterface
             $raw = $this->connection->popToProcessing($this->queue);
 
             if ($raw !== null) {
-                $envelope = $this->deserialize($raw);
-
-                if ($envelope !== null) {
-                    return $envelope;
-                }
-
-                // Deserialization failed - already moved to failed by deserialize()
-                continue;
+                return $this->deserialize($raw);
             }
 
             delay(50);
@@ -127,16 +124,24 @@ final class RedisTransport implements TransportInterface
         $this->reclaimed = false;
     }
 
-    private function deserialize(string $raw): ?Envelope
+    private function deserialize(string $raw): Envelope
     {
         try {
             $envelope = $this->serializer->deserialize($raw);
+            $envelope = $envelope->withoutAll(RedisStamp::class);
+
+            if (!$envelope->has(QueueStamp::class)) {
+                $envelope = $envelope->with(new QueueStamp($this->queue));
+            }
 
             return $envelope->with(new RedisStamp($raw, $this->queue));
         } catch (\Throwable $e) {
-            $this->connection->pushFailed($this->queue, $raw, $e->getMessage());
-
-            return null;
+            return Envelope::wrap(
+                new UnprocessableMessage(rawPayload: $raw, queue: $this->queue),
+                ErrorDetailsStamp::fromThrowable($e),
+                new RedisStamp($raw, $this->queue),
+                new QueueStamp($this->queue),
+            );
         }
     }
 }

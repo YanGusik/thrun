@@ -65,7 +65,14 @@ final class WorkerThread
                 'ok'             => false,
                 'envelope'       => $envelope,
                 'timedOut'       => false,
-                'error'          => $e,
+                'error'          => [
+                    'class'   => $e::class,
+                    'message' => $e->getMessage(),
+                    'code'    => $e->getCode(),
+                    'trace'   => $e->getTraceAsString(),
+                    'file'    => $e->getFile(),
+                    'line'    => $e->getLine(),
+                ],
                 'processingTime' => (hrtime(true) - $start) / 1e9,
                 'wasRetried'     => false,
             ]);

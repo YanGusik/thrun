@@ -5,7 +5,8 @@
   "license": "MIT",
   "require": {
     "php": ">=8.4",
-    "ext-pcntl": "*"
+    "ext-pcntl": "*",
+    "ramsey/uuid": "^4.9"
   },
   "require-dev": {
     "testo/testo": "^0.10.2"

@@ -13,6 +13,8 @@ final class ErrorDetailsStamp implements StampInterface
         public readonly string $message,
         public readonly int $code,
         public readonly ?string $trace = null,
+        public readonly ?string $file = null,
+        public readonly ?int $line = null,
     ) {}
 
     public static function fromThrowable(\Throwable $e): self
@@ -22,6 +24,8 @@ final class ErrorDetailsStamp implements StampInterface
             message: $e->getMessage(),
             code: $e->getCode(),
             trace: $e->getTraceAsString(),
+            file: $e->getFile(),
+            line: $e->getLine(),
         );
     }
 }

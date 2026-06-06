@@ -34,23 +34,29 @@ final class JsonSerializer implements SerializerInterface
         private readonly MessageTypeResolverInterface $typeResolver,
     ) {}
 
-    public function serialize(Envelope $envelope): string
+    public function extractStamps(Envelope $envelope): array
     {
-        $stamps       = [];
-        $messageId    = null;
-
+        $stamps = [];
         foreach ($envelope->allStamps() as $stamp) {
-            if ($stamp instanceof MessageIdStamp) {
-                $messageId = $stamp->id;
-                continue;
-            }
-
             $class = $stamp::class;
             $data  = $stamp instanceof NormalizableStampInterface
                 ? $stamp->normalize()
                 : $this->objectToArray($stamp);
 
             $stamps[$class][] = $data;
+        }
+
+        return $stamps;
+    }
+
+    public function serialize(Envelope $envelope): string
+    {
+        $stamps    = $this->extractStamps($envelope);
+        $messageId = null;
+
+        if (isset($stamps[MessageIdStamp::class])) {
+            $messageId = $stamps[MessageIdStamp::class][0]['id'] ?? null;
+            unset($stamps[MessageIdStamp::class]);
         }
 
         $payload = [
