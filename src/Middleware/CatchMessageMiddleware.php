@@ -47,7 +47,7 @@ class CatchMessageMiddleware implements WorkerMiddlewareInterface
                 $e->getLine()
             );
 
-            throw $exception;
+            throw $e;
         }
     }
 }
