@@ -131,7 +131,7 @@ final class Worker
     {
         return function (): void {
             while (true) {
-                /** @var array{ok: bool, envelope: Envelope, timedOut?: bool, error?: Throwable|null, processingTime?: float, wasRetried?: bool, retryDelayMs?: int|null} $result */
+                /** @var array{ok: bool, envelope: Envelope, timedOut?: bool, error?: array{class:string,message:string,code:int,trace:string}|Throwable|null, processingTime?: float, wasRetried?: bool, retryDelayMs?: int|null} $result */
                 $result = $this->resultChannel->recv();
 
                 $this->metrics->decrementActive();
@@ -152,9 +152,30 @@ final class Worker
                         $this->metrics->incrementTimedOut();
                     }
 
+                    $error = null;
+                    $errorStamp = null;
+                    if (isset($result['error']['class'])) {
+                        $error = new \RuntimeException(
+                            sprintf('[%s] %s', $result['error']['class'], $result['error']['message']),
+                            $result['error']['code'] ?? 0,
+                        );
+                        $errorStamp = new ErrorDetailsStamp(
+                            exceptionClass: $result['error']['class'],
+                            message: $result['error']['message'],
+                            code: $result['error']['code'] ?? 0,
+                            trace: $result['error']['trace'],
+                            file: $result['error']['file'] ?? null,
+                            line: $result['error']['line'] ?? null,
+                        );
+                    } elseif (isset($result['error']) && $result['error'] instanceof \Throwable) {
+                        $error = $result['error'];
+                        $errorStamp = ErrorDetailsStamp::fromThrowable($error);
+                    }
+
                     $wasRetried = $this->handleFailure(
                         $result['envelope'],
-                        $result['error'] ?? null,
+                        $error,
+                        $errorStamp,
                         $result['retryDelayMs'] ?? null,
                     );
 
@@ -166,7 +187,7 @@ final class Worker
         };
     }
 
-    private function handleFailure(Envelope $envelope, ?Throwable $error, ?int $explicitRetryDelayMs): bool
+    private function handleFailure(Envelope $envelope, ?Throwable $error, ?ErrorDetailsStamp $errorStamp, ?int $explicitRetryDelayMs): bool
     {
         $retryStamp   = $envelope->last(RetryStamp::class);
         $redeliveries = $envelope->all(RedeliveryStamp::class);
@@ -194,10 +215,8 @@ final class Worker
         }
 
         $this->transport->reject($envelope);
-        if ($this->failureTransport !== null && $error !== null) {
-            $this->failureTransport->send($envelope->with(
-                ErrorDetailsStamp::fromThrowable($error),
-            ));
+        if ($this->failureTransport !== null && $errorStamp !== null) {
+            $this->failureTransport->send($envelope->with($errorStamp));
         }
 
         return false;
