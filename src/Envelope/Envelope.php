@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Thrun\Envelope;
 
 use Thrun\Contract\StampInterface;
+use Thrun\Envelope\Stamp\JobIdStamp;
 
 final class Envelope
 {
@@ -25,7 +26,14 @@ final class Envelope
     public static function wrap(object|array $message, StampInterface ...$stamps): self
     {
         $type = is_object($message) ? $message::class : 'array';
-        return new self($message, type: $type, stamps: $stamps);
+
+        foreach ($stamps as $stamp) {
+            if ($stamp instanceof JobIdStamp) {
+                return new self($message, type: $type, stamps: $stamps);
+            }
+        }
+
+        return new self($message, type: $type, stamps: [...$stamps, new JobIdStamp()]);
     }
 
     public function with(StampInterface ...$stamps): self

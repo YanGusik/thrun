@@ -18,6 +18,7 @@ use Thrun\Contract\SenderInterface;
 use Thrun\Envelope\Envelope;
 use Thrun\Envelope\Stamp\DelayStamp;
 use Thrun\Envelope\Stamp\ErrorDetailsStamp;
+use Thrun\Envelope\Stamp\JobIdStamp;
 use Thrun\Envelope\Stamp\RedeliveryStamp;
 use Thrun\Envelope\Stamp\RetryStamp;
 use Thrun\Worker\Metrics\NullMetrics;
@@ -104,6 +105,10 @@ final class Worker
                 $envelope = $this->transport->receive();
                 if ($envelope === null) {
                     break;
+                }
+
+                if (!$envelope->has(JobIdStamp::class)) {
+                    $envelope = $envelope->with(new JobIdStamp());
                 }
 
 //                var_dump($envelope, $resultChannel, $handlers, $middleware);
@@ -213,8 +218,10 @@ final class Worker
 
         return $envelope
             ->withoutAll(RedeliveryStamp::class)
+            ->withoutAll(JobIdStamp::class)
             ->with(...$history)
-            ->with(new DelayStamp(delayMs: $delayMs));
+            ->with(new DelayStamp(delayMs: $delayMs))
+            ->with(new JobIdStamp());
     }
 
     private function detectBootloader(): Closure

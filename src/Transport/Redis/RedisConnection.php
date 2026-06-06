@@ -11,7 +11,6 @@ namespace Thrun\Transport\Redis;
  *   {prefix}:{queue}:ready       - list, RPUSH / LPOP / LMOVE
  *   {prefix}:{queue}:processing  - list, atomic move from ready
  *   {prefix}:{queue}:delayed     - sorted set, ZADD / ZRANGEBYSCORE
- *   {prefix}:{queue}:failed      - list, wrapped JSON with error metadata
  */
 final class RedisConnection
 {
@@ -105,17 +104,6 @@ final class RedisConnection
         return $items[0];
     }
 
-    public function pushFailed(string $queue, string $rawPayload, ?string $error = null): void
-    {
-        $wrapped = json_encode([
-            'payload'  => $rawPayload,
-            'error'    => $error,
-            'failedAt' => time(),
-        ], JSON_THROW_ON_ERROR);
-
-        $this->redis->lPush($this->key($queue, 'failed'), $wrapped);
-    }
-
     /**
      * Delete all keys for a queue (useful in tests).
      */
@@ -133,7 +121,7 @@ final class RedisConnection
 
     public function purge(string $queue): void
     {
-        foreach (['ready', 'processing', 'delayed', 'failed'] as $suffix) {
+        foreach (['ready', 'processing', 'delayed'] as $suffix) {
             $this->redis->del($this->key($queue, $suffix));
         }
     }
