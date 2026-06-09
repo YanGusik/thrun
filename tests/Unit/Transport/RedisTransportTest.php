@@ -7,6 +7,7 @@ namespace Thrun\Tests\Unit\Transport;
 use Testo\Assert;
 use Testo\Lifecycle\BeforeClass;
 use Testo\Lifecycle\BeforeTest;
+use Testo\Test;
 use Thrun\Envelope\Envelope;
 use Thrun\Serialization\ClassMapMessageTypeResolver;
 use Thrun\Serialization\JsonSerializer;

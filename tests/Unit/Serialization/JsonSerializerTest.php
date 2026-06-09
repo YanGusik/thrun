@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Thrun\Tests\Unit\Serialization;
 
 use Testo\Assert;
+use Thrun\Envelope\Stamp\JobIdStamp;
 use Thrun\Serialization\ClassMapMessageTypeResolver;
 use Thrun\Serialization\JsonSerializer;
 use Thrun\Envelope\Envelope;
@@ -48,7 +49,7 @@ final class JsonSerializerTest extends AsyncTestCase
         Assert::same($restored->message::class, PingMessage::class);
     }
 
-    public function emptyMessageNoStamps(): void
+    public function emptyMessageWithJobIdStamp(): void
     {
         $resolver   = new ClassMapMessageTypeResolver();
         $serializer = new JsonSerializer($resolver);
@@ -57,7 +58,8 @@ final class JsonSerializerTest extends AsyncTestCase
         $json     = $serializer->serialize($envelope);
         $restored = $serializer->deserialize($json);
 
-        Assert::same(count($restored->allStamps()), 0);
+        Assert::same(count($restored->allStamps()), 1);
+        Assert::notNull($envelope->last(JobIdStamp::class)?->id);
     }
 
     public function invalidJsonThrowsException(): void

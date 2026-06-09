@@ -6,6 +6,7 @@ namespace Thrun\Tests\Unit\Envelope;
 
 use Testo\Assert;
 use Thrun\Envelope\Envelope;
+use Thrun\Envelope\Stamp\JobIdStamp;
 use Thrun\Envelope\Stamp\PartitionStamp;
 use Thrun\Tests\AsyncTestCase;
 use Thrun\Tests\Fixture\PingMessage;
@@ -84,7 +85,7 @@ final class EnvelopeTest extends AsyncTestCase
         Assert::same($envelope->last(QueueStamp::class)?->queue, 'emails');
     }
 
-    public function allStampsReturnsEverything(): void
+    public function allStampsReturnsWithJobIdStamp(): void
     {
         $envelope = Envelope::wrap(new PingMessage())
             ->with(new PartitionStamp('a'))
@@ -92,6 +93,8 @@ final class EnvelopeTest extends AsyncTestCase
             ->with(new QueueStamp('emails'));
 
         $all = $envelope->allStamps();
-        Assert::same(count($all), 3);
+        var_dump($all);
+        Assert::same(count($all), 4);
+        Assert::notNull($envelope->last(JobIdStamp::class)?->id);
     }
 }
