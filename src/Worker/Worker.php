@@ -9,7 +9,6 @@ use Async\Scope;
 use Async\TaskSet;
 use Async\ThreadChannel;
 use Async\ThreadPool;
-use Async\ThreadPoolException;
 use Closure;
 use Throwable;
 use Thrun\Contract\MetricsInterface;
@@ -22,7 +21,7 @@ use Thrun\Envelope\Stamp\JobIdStamp;
 use Thrun\Envelope\Stamp\RedeliveryStamp;
 use Thrun\Envelope\Stamp\RetryStamp;
 use Thrun\Worker\Metrics\NullMetrics;
-use function Async\await;
+use function Async\protect;
 
 final class Worker
 {
@@ -94,6 +93,13 @@ final class Worker
         $this->resultChannel?->close();
     }
 
+    public function isIdle(): bool
+    {
+        return $this->threadPool->getPendingCount() === 0
+            && $this->threadPool->getRunningCount() === 0
+            && $this->threadPool->getCompletedCount() > 0;
+    }
+
     private function producerCoro(): Closure
     {
         return function (): void {
@@ -134,61 +140,61 @@ final class Worker
                 /** @var array{ok: bool, envelope: Envelope, timedOut?: bool, error?: array{class:string,message:string,code:int,trace:string}|Throwable|null, processingTime?: float, wasRetried?: bool, retryDelayMs?: int|null} $result */
                 $result = $this->resultChannel->recv();
 
-                $this->metrics->decrementActive();
+//                protect(function () use ($result) {
+                    $this->metrics->decrementActive();
 
-                if ($this->options->onResult !== null) {
-                    ($this->options->onResult)($result);
-                }
-
-                $this->metrics->recordProcessingTime($result['processingTime'] ?? 0);
-
-                if ($result['ok']) {
-                    $this->metrics->incrementProcessed();
-                    $this->transport->ack($result['envelope']);
-                } else {
-                    $this->metrics->incrementFailed();
-
-                    if ($result['timedOut'] ?? false) {
-                        $this->metrics->incrementTimedOut();
+                    if ($this->options->onResult !== null) {
+                        ($this->options->onResult)($result);
                     }
 
-                    $error = null;
-                    $errorStamp = null;
-                    if (isset($result['error']['class'])) {
-                        $error = new \RuntimeException(
-                            sprintf('[%s] %s', $result['error']['class'], $result['error']['message']),
-                            $result['error']['code'] ?? 0,
+                    $this->metrics->recordProcessingTime($result['processingTime'] ?? 0);
+
+                    if ($result['ok']) {
+                        $this->metrics->incrementProcessed();
+                        $this->transport->ack($result['envelope']);
+                    } else {
+                        $this->metrics->incrementFailed();
+
+                        if ($result['timedOut'] ?? false) {
+                            $this->metrics->incrementTimedOut();
+                        }
+
+                        $error      = null;
+                        $errorStamp = null;
+                        if (isset($result['error']['class'])) {
+                            $error      = new \RuntimeException(
+                                sprintf('[%s] %s', $result['error']['class'], $result['error']['message']),
+                                $result['error']['code'] ?? 0,
+                            );
+                            $errorStamp = new ErrorDetailsStamp(
+                                exceptionClass: $result['error']['class'],
+                                message: $result['error']['message'],
+                                code: $result['error']['code'] ?? 0,
+                                trace: $result['error']['trace'],
+                                file: $result['error']['file'] ?? null,
+                                line: $result['error']['line'] ?? null,
+                            );
+                        }
+
+                        $wasRetried = $this->handleFailure(
+                            $result['envelope'],
+                            $error,
+                            $errorStamp,
+                            $result['retryDelayMs'] ?? null,
                         );
-                        $errorStamp = new ErrorDetailsStamp(
-                            exceptionClass: $result['error']['class'],
-                            message: $result['error']['message'],
-                            code: $result['error']['code'] ?? 0,
-                            trace: $result['error']['trace'],
-                            file: $result['error']['file'] ?? null,
-                            line: $result['error']['line'] ?? null,
-                        );
-                    } elseif (isset($result['error']) && $result['error'] instanceof \Throwable) {
-                        $error = $result['error'];
-                        $errorStamp = ErrorDetailsStamp::fromThrowable($error);
-                    }
 
-                    $wasRetried = $this->handleFailure(
-                        $result['envelope'],
-                        $error,
-                        $errorStamp,
-                        $result['retryDelayMs'] ?? null,
-                    );
-
-                    if ($wasRetried) {
-                        $this->metrics->incrementRetried();
+                        if ($wasRetried) {
+                            $this->metrics->incrementRetried();
+                        }
                     }
-                }
+//                });
             }
         };
     }
 
-    private function handleFailure(Envelope $envelope, ?Throwable $error, ?ErrorDetailsStamp $errorStamp, ?int $explicitRetryDelayMs): bool
-    {
+    private function handleFailure(
+        Envelope $envelope, ?Throwable $error, ?ErrorDetailsStamp $errorStamp, ?int $explicitRetryDelayMs
+    ): bool {
         $retryStamp   = $envelope->last(RetryStamp::class);
         $redeliveries = $envelope->all(RedeliveryStamp::class);
         $attempt      = array_last($redeliveries)->attempt ?? 0;
@@ -224,9 +230,9 @@ final class Worker
 
     private function buildRetryEnvelope(Envelope $envelope, int $delayMs, int $nextAttempt): Envelope
     {
-        $history = $envelope->all(RedeliveryStamp::class);
+        $history   = $envelope->all(RedeliveryStamp::class);
         $history[] = new RedeliveryStamp(
-            attempt:   $nextAttempt,
+            attempt: $nextAttempt,
             retriedAt: (new \DateTimeImmutable())->format(\DateTimeInterface::ATOM),
         );
 

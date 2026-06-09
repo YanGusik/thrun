@@ -4,17 +4,18 @@ declare(strict_types=1);
 
 namespace Thrun\Worker;
 
-final class WorkerOptions
+final readonly class WorkerOptions
 {
     /**
-     * @param array<int, WorkerMiddlewareInterface> $middleware
+     * @param  array<int, WorkerMiddlewareInterface>  $middleware
      */
     public function __construct(
-        public readonly int      $threads     = 4,
-        public readonly int      $concurrency = 10,
-        public readonly ?\Closure $bootloader  = null,
-        public readonly array    $middleware  = [],
-        public readonly ?\Closure $onDispatch  = null,
-        public readonly ?\Closure $onResult    = null,
-    ) {}
+        public int $threads = 4,
+        public int $concurrency = 10,
+        public ?\Closure $bootloader = null,
+        public array $middleware = [],
+        public ?\Closure $onDispatch = null,
+        public ?\Closure $onResult = null
+    ) {
+    }
 }

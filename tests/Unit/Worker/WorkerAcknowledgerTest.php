@@ -8,7 +8,6 @@ use Testo\Assert;
 use Thrun\Envelope\Envelope;
 use Thrun\Envelope\Stamp\DelayStamp;
 use Thrun\Envelope\Stamp\RedeliveryStamp;
-use Thrun\Envelope\Stamp\RetryStamp;
 use Thrun\Tests\AsyncTestCase;
 use Thrun\Tests\Fixture\PingMessage;
 use Thrun\Transport\InMemory\InMemoryTransport;
@@ -40,9 +39,6 @@ final class WorkerAcknowledgerTest extends AsyncTestCase
         );
 
         $this->runWorkerAndWait($worker, $transport, expectedAcked: 1, expectedRejected: 1);
-
-        //var_dump($transport);
-
 
         Assert::same($transport->ackedCount, 1, 'ackedCount');
         Assert::same($transport->rejectedCount, 1, 'rejectedCount');
@@ -88,38 +84,5 @@ final class WorkerAcknowledgerTest extends AsyncTestCase
         $this->runWorkerAndWait($worker, $transport, expectedAcked: 1);
 
         Assert::same($transport->ackedCount, 1);
-    }
-
-    private function runWorkerAndWait(
-        Worker $worker,
-        InMemoryTransport $transport,
-        int $expectedAcked = 0,
-        int $expectedRejected = 0,
-    ): void {
-        $coro = \Async\spawn(static function () use ($worker): void {
-            $worker->run();
-        });
-
-        $start = hrtime(true);
-        $timeoutNs = 3 * 1e9;
-        while (true) {
-            if ($transport->ackedCount >= $expectedAcked
-                && $transport->rejectedCount >= $expectedRejected
-            ) {
-                \Async\delay(500);
-                if ($transport->ackedCount >= $expectedAcked
-                    && $transport->rejectedCount >= $expectedRejected
-                ) {
-                    break;
-                }
-            }
-            if ((hrtime(true) - $start) > $timeoutNs) {
-                break;
-            }
-            \Async\delay(10);
-        }
-
-        $worker->stop();
-        await($coro);
     }
 }

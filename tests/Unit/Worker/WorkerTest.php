@@ -28,7 +28,7 @@ final class WorkerTest extends AsyncTestCase
             options: new WorkerOptions(threads: 1, concurrency: 2),
         );
 
-        $worker->run();
+        $this->runWorkerAndWait($worker, $transport);
 
         Assert::same($transport->ackedCount, 1);
         Assert::same($transport->rejectedCount, 0);
@@ -51,7 +51,7 @@ final class WorkerTest extends AsyncTestCase
             options: new WorkerOptions(threads: 2, concurrency: 3),
         );
 
-        $worker->run();
+        $this->runWorkerAndWait($worker, $transport);
 
         Assert::same($transport->ackedCount, 5);
         Assert::same($transport->rejectedCount, 0);
@@ -69,7 +69,7 @@ final class WorkerTest extends AsyncTestCase
             options: new WorkerOptions(threads: 1, concurrency: 1),
         );
 
-        $worker->run();
+        $this->runWorkerAndWait($worker, $transport);
 
         Assert::same($transport->ackedCount, 0);
         Assert::same($transport->rejectedCount, 1);

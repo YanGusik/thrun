@@ -4,21 +4,14 @@ declare(strict_types=1);
 
 namespace Thrun\Worker;
 
-use Async\Future;
-use Async\FutureState;
-use Async\OperationCanceledException;
-use Async\Scope;
-use Async\Signal;
-use Async\TaskSet;
+use Async\AsyncCancellation;
 use Async\ThreadChannel;
+use Throwable;
 use Thrun\Envelope\Envelope;
 use Thrun\Envelope\Stamp\TimeoutStamp;
 use Thrun\Exception\TimeoutException;
 use function Async\await;
-use function Async\await_any_or_fail;
 use function Async\delay;
-use function Async\signal;
-use function Async\spawn;
 use function sprintf;
 
 final class WorkerThread
@@ -65,14 +58,7 @@ final class WorkerThread
                 'ok'             => false,
                 'envelope'       => $envelope,
                 'timedOut'       => false,
-                'error'          => [
-                    'class'   => $e::class,
-                    'message' => $e->getMessage(),
-                    'code'    => $e->getCode(),
-                    'trace'   => $e->getTraceAsString(),
-                    'file'    => $e->getFile(),
-                    'line'    => $e->getLine(),
-                ],
+                'error'          => $this->convertThrowableToArray($e),
                 'processingTime' => (hrtime(true) - $start) / 1e9,
                 'wasRetried'     => false,
             ]);
@@ -88,7 +74,7 @@ final class WorkerThread
 
         try {
             return await($future, \Async\timeout($timeoutMs));
-        } catch (OperationCanceledException $e) {
+        } catch (AsyncCancellation $e) {
             $handlerScope->asNotSafely()->cancel();
             delay(50);
             $ack = new Acknowledger($envelope);
@@ -150,11 +136,12 @@ final class WorkerThread
     {
         try {
             if ($ack->isRetried()) {
+                $throwable = $ack->getFailureError() ?? new \RuntimeException('Retry requested by handler');
                 $this->resultChannel->send([
                     'ok'             => false,
                     'envelope'       => $envelope,
                     'timedOut'       => false,
-                    'error'          => $ack->getFailureError() ?? new \RuntimeException('Retry requested by handler'),
+                    'error'          => $this->convertThrowableToArray($throwable),
                     'processingTime' => $processingTime,
                     'wasRetried'     => true,
                     'retryDelayMs'   => $ack->getRetryDelayMs(),
@@ -164,11 +151,12 @@ final class WorkerThread
             }
 
             if ($ack->isFailed()) {
+                $throwable = $ack->getFailureError() ?? new \RuntimeException('Failed by handler');
                 $this->resultChannel->send([
                     'ok'             => false,
                     'envelope'       => $envelope,
                     'timedOut'       => $ack->isTimedOut(),
-                    'error'          => $ack->getFailureError() ?? new \RuntimeException('Failed by handler'),
+                    'error'          => $this->convertThrowableToArray($throwable),
                     'processingTime' => $processingTime,
                     'wasRetried'     => false,
                 ]);
@@ -186,5 +174,17 @@ final class WorkerThread
         } catch (\Throwable $e) {
             error_log('[Thrun WorkerThread] Failed to send result: '.$e::class.': '.$e->getMessage());
         }
+    }
+
+    private function convertThrowableToArray(Throwable $throwable): array
+    {
+        return [
+            'class'   => $throwable::class,
+            'message' => $throwable->getMessage(),
+            'code'    => $throwable->getCode(),
+            'trace'   => $throwable->getTraceAsString(),
+            'file'    => $throwable->getFile(),
+            'line'    => $throwable->getLine(),
+        ];
     }
 }
