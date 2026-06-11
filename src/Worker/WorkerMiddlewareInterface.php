@@ -6,5 +6,5 @@ namespace Thrun\Worker;
 
 interface WorkerMiddlewareInterface
 {
-    public function handle(object $message, Acknowledger $ack, \Closure $next): void;
+    public function handle(array|object $message, Acknowledger $ack, \Closure $next): void;
 }

@@ -9,7 +9,7 @@ use Thrun\Worker\WorkerMiddlewareInterface;
 
 class CatchMessageMiddleware implements WorkerMiddlewareInterface
 {
-    public function handle(object $message, Acknowledger $ack, \Closure $next): void
+    public function handle(array|object $message, Acknowledger $ack, \Closure $next): void
     {
         try {
             $next($message, $ack);

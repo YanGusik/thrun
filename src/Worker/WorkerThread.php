@@ -124,7 +124,7 @@ final class WorkerThread
         };
 
         foreach (array_reverse($this->middleware) as $middleware) {
-            $next = function (object $message, Acknowledger $ack) use ($middleware, $next): void {
+            $next = function (object|array $message, Acknowledger $ack) use ($middleware, $next): void {
                 $middleware->handle($message, $ack, $next);
             };
         }
