@@ -21,7 +21,6 @@ use Thrun\Envelope\Stamp\JobIdStamp;
 use Thrun\Envelope\Stamp\RedeliveryStamp;
 use Thrun\Envelope\Stamp\RetryStamp;
 use Thrun\Worker\Metrics\NullMetrics;
-use function Async\protect;
 
 final class Worker
 {
@@ -49,6 +48,7 @@ final class Worker
 
         $this->threadPool = new ThreadPool(
             workers: $this->options->threads,
+            queueSize: $this->options->queueSize,
             bootloader: $bootloader,
             coroutine: $this->options->concurrency > 0,
             concurrency: $this->options->concurrency

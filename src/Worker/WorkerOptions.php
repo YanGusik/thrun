@@ -12,6 +12,7 @@ final readonly class WorkerOptions
     public function __construct(
         public int $threads = 4,
         public int $concurrency = 10,
+        public int $queueSize = 0, // workers * 4
         public ?\Closure $bootloader = null,
         public array $middleware = [],
         public ?\Closure $onDispatch = null,
