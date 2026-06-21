@@ -86,7 +86,6 @@ final class RpcServerTest extends AsyncTestCase
         FrameStream::write($publisher, Frame::event('order.completed', ['order_id' => 1]));
         FrameStream::write($publisher, Frame::event('some.other.event', ['ok' => true]));
 
-        // если бы первое событие протекло мимо подписки — оно бы пришло первым здесь
         $received = FrameStream::read($bystander);
         Assert::same($received->payload['event'], 'some.other.event');
 
@@ -163,14 +162,14 @@ final class RpcServerTest extends AsyncTestCase
         $subscriber = stream_socket_client("unix://{$this->socketPath}");
         FrameStream::write($subscriber, Frame::subscribe('order.completed'));
         delay(20);
-        fclose($subscriber); // отключились без unsubscribe
+        fclose($subscriber);
         delay(20);
 
         $publisher = stream_socket_client("unix://{$this->socketPath}");
         FrameStream::write($publisher, Frame::event('order.completed', ['order_id' => 1]));
         delay(20);
 
-        Assert::true(true); // дошли сюда без исключения — broadcast пережил мёртвого подписчика
+        Assert::true(true);
 
         fclose($publisher);
     }
