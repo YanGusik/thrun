@@ -18,7 +18,7 @@ use function Async\spawn;
 #[Test]
 abstract class AsyncTestCase
 {
-    #[BeforeTest]
+    #[BeforeTest(10)]
     public function assertNoZombieCoroutines(): void
     {
         delay(50);
@@ -35,7 +35,7 @@ abstract class AsyncTestCase
                 echo "[ZOMBIE] isCancelled: ".($coro->isCancelled() ? 'yes' : 'no')."\n";
             }
         }
-        Assert::same(count($coroutines), 1);
+        Assert::same(count($coroutines), 1, 'zombie coroutines are expected');
     }
 
     protected function runWorkerAndWait(
