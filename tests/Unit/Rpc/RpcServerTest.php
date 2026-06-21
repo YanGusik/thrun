@@ -4,6 +4,7 @@ namespace Thrun\Tests\Unit\Rpc;
 
 use RuntimeException;
 use Testo\Assert;
+use Testo\Expect;
 use Testo\Lifecycle\AfterClass;
 use Testo\Lifecycle\AfterTest;
 use Testo\Lifecycle\BeforeClass;
@@ -18,8 +19,10 @@ use Thrun\Serialization\JsonSerializer;
 use Thrun\Tests\AsyncTestCase;
 use Thrun\Tests\Fixture\PingMessage;
 use Thrun\Transport\InMemory\InMemoryTransport;
+use function Async\await;
 use function Async\delay;
 use function Async\spawn;
+use function Async\timeout;
 
 final class RpcServerTest extends AsyncTestCase
 {
@@ -56,6 +59,40 @@ final class RpcServerTest extends AsyncTestCase
         delay(50);
 
         return $server;
+    }
+
+    public function broadcastsEventToCorrectSubscriber(): void
+    {
+        $subscriber = stream_socket_client("unix://{$this->socketPath}");
+        FrameStream::write($subscriber, Frame::subscribe('order.completed'));
+        delay(20);
+
+        $subscriberOther = stream_socket_client("unix://{$this->socketPath}");
+        delay(20);
+
+        $publisher = stream_socket_client("unix://{$this->socketPath}");
+        FrameStream::write($publisher, Frame::event('order.completed', ['order_id' => 123]));
+
+        $test = spawn(function () use ($subscriberOther) {
+            return FrameStream::read($subscriberOther);
+        });
+
+        try {
+            await($test, timeout(100));
+            Assert::fail("Should have thrown an exception");
+        } catch (\Cancellation $cancellation) {
+            Assert::object($cancellation);
+        } finally {
+            fclose($subscriberOther);
+        }
+
+        $received = FrameStream::read($subscriber);
+
+        Assert::same($received->type, FrameType::Event);
+        Assert::same($received->payload['data']['order_id'], 123);
+
+        fclose($subscriber);
+        fclose($publisher);
     }
 
     public function broadcastsEventToSubscriber(): void
