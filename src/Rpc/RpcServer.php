@@ -31,7 +31,7 @@ final class RpcServer
         private readonly mixed $serverSocket,
         private readonly SerializerInterface $serializer,
     ) {
-        $this->scope = new Scope();
+        $this->scope = Scope::inherit();
         $this->tasks = new TaskSet(concurrency: 64, scope: $this->scope);
     }
 
@@ -96,7 +96,7 @@ final class RpcServer
             }
         } catch (\Cancellation $cancellation) {
         } catch (\Throwable $e) {
-            error_log('[RpcServer] connection error: '.$e->getMessage());
+            error_log('[RpcServer] connection error: '.$e->getMessage() . mb_substr($e->getTraceAsString(), 0, 100));
         } finally {
             $this->cleanupConnection($connId);
             @fclose($client);
@@ -128,12 +128,22 @@ final class RpcServer
             return;
         }
 
-        foreach ($this->subscribers[$name] ?? [] as $conn) {
+        $recipients = ($this->subscribers['*'] ?? [])
+            + ($this->subscribers[$name] ?? []);
+
+        $dead = [];
+
+        foreach ($recipients as $connId => $conn) {
             try {
                 FrameStream::write($conn, $frame);
             } catch (\Throwable) {
-                // ignore
+                $dead[] = [$connId, $conn];
             }
+        }
+
+        foreach ($dead as [$connId, $conn]) {
+            $this->cleanupConnection($connId);
+            @fclose($conn);
         }
     }
 
