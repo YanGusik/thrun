@@ -1,4 +1,4 @@
-FROM trueasync/php-true-async:0.7.0-beta.5-php8.6
+FROM trueasync/php-true-async:latest
 
 RUN apt-get update && apt-get install -y \
     build-essential \

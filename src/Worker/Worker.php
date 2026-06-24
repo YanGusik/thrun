@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Thrun\Worker;
 
 
+use Async\AsyncException;
 use Async\Scope;
 use Async\TaskSet;
 use Async\ThreadChannel;
@@ -56,6 +57,10 @@ final class Worker
         $this->taskSet    = new TaskSet(concurrency: 3, scope: $this->mainScope);
     }
 
+    /**
+     * @throws AsyncException
+     * @throws Throwable
+     */
     public function run(): void
     {
         $this->running = true;
@@ -63,19 +68,17 @@ final class Worker
             $this->taskSet->spawn($this->resultReaderCoro());
             $this->taskSet->spawn($this->producerCoro());
 
-            foreach ($this->taskSet as [$result, $error]) {
-                if ($error !== null) {
-                    /** @var Throwable $error */
-                    if ($error instanceof \Cancellation) {
-                        continue;
-                    }
-                    throw $error;
-                    $msg = sprintf("[Worker] %s: %s\n[stacktrace]\n%s", get_class($error), $error->getMessage(),
-                        $error->getTraceAsString());
-                    error_log($msg);
-                }
-            }
 
+            while ($this->taskSet->count() !== 0) {
+                try {
+                    $this->taskSet->joinNext()->await();
+                } catch (\Cancellation $e) {
+                }
+
+//                $msg = sprintf("[Worker] %s: %s\n[stacktrace]\n%s", get_class($error), $error->getMessage(),
+//                    $error->getTraceAsString());
+//                error_log($msg);
+            }
         } finally {
             $this->stop();
         }
