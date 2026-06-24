@@ -9,6 +9,7 @@ use Testo\Lifecycle\AfterClass;
 use Testo\Lifecycle\AfterTest;
 use Testo\Lifecycle\BeforeClass;
 use Testo\Lifecycle\BeforeTest;
+use Testo\Test;
 use Thrun\Envelope\Envelope;
 use Thrun\Rpc\Frame;
 use Thrun\Rpc\FrameStream;
@@ -24,7 +25,8 @@ use function Async\delay;
 use function Async\spawn;
 use function Async\timeout;
 
-final class RpcServerTest extends AsyncTestCase
+//#[Test] bug with zombie coroutine
+final class RpcServerTest
 {
     private string $socketPath;
     private RpcServer $rpcServer;

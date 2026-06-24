@@ -38,6 +38,7 @@ final class WorkerRetryTest extends AsyncTestCase
                     if ($count < 1) {
                         throw new \RuntimeException('fail');
                     }
+                    $ack->ack();
                 },
             ],
             options: new WorkerOptions(threads: 1, concurrency: 1),

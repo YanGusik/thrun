@@ -6,6 +6,7 @@ namespace Thrun\Tests;
 
 use Async\Scope;
 use Testo\Assert;
+use Testo\Lifecycle\AfterTest;
 use Testo\Lifecycle\BeforeTest;
 use Testo\Test;
 use Thrun\Transport\InMemory\InMemoryTransport;
@@ -18,7 +19,7 @@ use function Async\spawn;
 #[Test]
 abstract class AsyncTestCase
 {
-    #[BeforeTest(10)]
+    #[AfterTest(10)]
     public function assertNoZombieCoroutines(): void
     {
         delay(50);
@@ -28,13 +29,14 @@ abstract class AsyncTestCase
                 if ($coro === current_coroutine()) {
                     continue;
                 }
-                echo "\n[ZOMBIE] spawn: ".$coro->getSpawnLocation()."\n";
-                echo "[ZOMBIE] suspended: ".($coro->getSuspendLocation() ?: 'not suspended')."\n";
-                echo "[ZOMBIE] isSuspended: ".($coro->isSuspended() ? 'yes' : 'no')."\n";
-                echo "[ZOMBIE] isCompleted: ".($coro->isCompleted() ? 'yes' : 'no')."\n";
-                echo "[ZOMBIE] isCancelled: ".($coro->isCancelled() ? 'yes' : 'no')."\n";
+                error_log("\n[ZOMBIE] spawn: ".$coro->getSpawnLocation());
+                error_log("[ZOMBIE] suspended: ".($coro->getSuspendLocation() ?: 'not suspended'));
+                error_log("[ZOMBIE] isSuspended: ".($coro->isSuspended() ? 'yes' : 'no'));
+                error_log("[ZOMBIE] isCompleted: ".($coro->isCompleted() ? 'yes' : 'no'));
+                error_log("[ZOMBIE] isCancelled: ".($coro->isCancelled() ? 'yes' : 'no'));
             }
         }
+
         Assert::same(count($coroutines), 1, 'zombie coroutines are expected');
     }
 

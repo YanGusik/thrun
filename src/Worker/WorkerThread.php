@@ -164,6 +164,20 @@ final class WorkerThread
                 return;
             }
 
+            if (!$ack->isAcked()) {
+                $throwable = new \RuntimeException('Not acked');
+                $this->resultChannel->send([
+                    'ok'             => false,
+                    'envelope'       => $envelope,
+                    'timedOut'       => $ack->isTimedOut(),
+                    'error'          => $this->convertThrowableToArray($throwable),
+                    'processingTime' => $processingTime,
+                    'wasRetried'     => false,
+                ]);
+
+                return;
+            }
+
             $this->resultChannel->send([
                 'ok'             => true,
                 'envelope'       => $envelope,

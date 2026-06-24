@@ -3,12 +3,14 @@
 namespace Thrun\Tests\Unit\Rpc;
 
 use Testo\Assert;
+use Testo\Test;
 use Thrun\Rpc\Frame;
 use Thrun\Rpc\FrameStream;
 use Thrun\Rpc\FrameType;
 use Thrun\Tests\AsyncTestCase;
 
-final class FrameStreamTest extends AsyncTestCase
+#[Test]
+final class FrameStreamTest
 {
     public function roundTripsJobFrame(): void
     {

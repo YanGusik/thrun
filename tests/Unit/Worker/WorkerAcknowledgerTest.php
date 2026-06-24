@@ -49,7 +49,7 @@ final class WorkerAcknowledgerTest extends AsyncTestCase
 
     public function handlerWithAcknowledgerCanFail(): void
     {
-        $transport = new InMemoryTransport();
+        $transport        = new InMemoryTransport();
         $failureTransport = new InMemoryTransport();
         $transport->send(Envelope::wrap(new PingMessage()));
 
@@ -84,5 +84,29 @@ final class WorkerAcknowledgerTest extends AsyncTestCase
         $this->runWorkerAndWait($worker, $transport, expectedAcked: 1);
 
         Assert::same($transport->ackedCount, 1);
+    }
+
+    public function rejectIfNotAcceptedAck(): void
+    {
+        $transport        = new InMemoryTransport();
+        $failureTransport = new InMemoryTransport();
+        $transport->send(Envelope::wrap(new PingMessage()));
+
+        $worker = new Worker(
+            transport: $transport,
+            handlers: [
+                PingMessage::class => static function (PingMessage $msg, Acknowledger $ack): void {
+                    // nothing
+                },
+            ],
+            options: new WorkerOptions(threads: 1, concurrency: 1),
+            failureTransport: $failureTransport,
+        );
+
+        $this->runWorkerAndWait($worker, $transport, expectedRejected: 1);
+
+        Assert::same($transport->ackedCount, 0, 'acked');
+        Assert::same($transport->rejectedCount, 1, 'rejected');
+        Assert::same(count($failureTransport->sentEnvelopes), 1, 'failureTransport');
     }
 }
