@@ -78,6 +78,7 @@ final class RpcServer
     private function handleConnection(mixed $client): void
     {
         $connId = (int) $client;
+        stream_set_timeout($client, -1);
 
         try {
             while ($this->running) {
