@@ -19,7 +19,7 @@ use function Async\spawn;
 #[Test]
 abstract class AsyncTestCase
 {
-    #[AfterTest(10)]
+    #[AfterTest]
     public function assertNoZombieCoroutines(): void
     {
         delay(50);
@@ -29,15 +29,20 @@ abstract class AsyncTestCase
                 if ($coro === current_coroutine()) {
                     continue;
                 }
-                error_log("\n[ZOMBIE] spawn: ".$coro->getSpawnLocation());
-                error_log("[ZOMBIE] suspended: ".($coro->getSuspendLocation() ?: 'not suspended'));
-                error_log("[ZOMBIE] isSuspended: ".($coro->isSuspended() ? 'yes' : 'no'));
-                error_log("[ZOMBIE] isCompleted: ".($coro->isCompleted() ? 'yes' : 'no'));
-                error_log("[ZOMBIE] isCancelled: ".($coro->isCancelled() ? 'yes' : 'no'));
+//                error_log("\n[ZOMBIE] spawn: ".$coro->getSpawnLocation());
+//                error_log("[ZOMBIE] suspended: ".($coro->getSuspendLocation() ?: 'not suspended'));
+//                error_log("[ZOMBIE] isSuspended: ".($coro->isSuspended() ? 'yes' : 'no'));
+//                error_log("[ZOMBIE] isCompleted: ".($coro->isCompleted() ? 'yes' : 'no'));
+//                error_log("[ZOMBIE] isCancelled: ".($coro->isCancelled() ? 'yes' : 'no'));
             }
         }
 
-        Assert::same(count($coroutines), 1, 'zombie coroutines are expected');
+        if (count($coroutines) !== 1)
+        {
+            Assert::fail("zombie coroutines are expected");
+        }
+
+//        Assert::same(count($coroutines), 1, 'zombie coroutines are expected');
     }
 
     protected function runWorkerAndWait(

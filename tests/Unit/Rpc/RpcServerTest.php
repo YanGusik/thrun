@@ -25,8 +25,7 @@ use function Async\delay;
 use function Async\spawn;
 use function Async\timeout;
 
-//#[Test] bug with zombie coroutine
-final class RpcServerTest
+final class RpcServerTest extends AsyncTestCase
 {
     private string $socketPath;
     private RpcServer $rpcServer;
@@ -39,10 +38,11 @@ final class RpcServerTest
         $this->rpcServer = $this->startServer();
     }
 
-    #[AfterTest]
+    #[AfterTest(100)]
     protected function deleteSocketFile(): void
     {
         $this->rpcServer->stop();
+        delay(50);
     }
 
     private function startServer(): RpcServer

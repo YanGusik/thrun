@@ -9,8 +9,7 @@ use Thrun\Rpc\FrameStream;
 use Thrun\Rpc\FrameType;
 use Thrun\Tests\AsyncTestCase;
 
-#[Test]
-final class FrameStreamTest
+final class FrameStreamTest extends AsyncTestCase
 {
     public function roundTripsJobFrame(): void
     {

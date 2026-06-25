@@ -31,7 +31,7 @@ final class RpcServer
         private readonly mixed $serverSocket,
         private readonly SerializerInterface $serializer,
     ) {
-        $this->scope = Scope::inherit();
+        $this->scope = Scope::inherit()->asNotSafely();
         $this->tasks = new TaskSet(concurrency: 64, scope: $this->scope);
     }
 
