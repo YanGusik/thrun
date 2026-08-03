@@ -19,7 +19,10 @@ final class PriorityStrategy implements SchedulingStrategyInterface
         }
 
         // accumulate credits proportional to priority
+        $priorities = [];
+
         foreach ($queues as $state) {
+            $priorities[$state->name]    = $state->priority;
             $this->credits[$state->name] = ($this->credits[$state->name] ?? 0.0) + $state->priority;
         }
 
@@ -36,7 +39,7 @@ final class PriorityStrategy implements SchedulingStrategyInterface
 
         // deduct winner's own priority so others catch up next round
         if ($best !== null) {
-            $this->credits[$best] -= $queues[array_search($best, array_column($queues, 'name'), true)]->priority;
+            $this->credits[$best] -= $priorities[$best];
         }
 
         return $best;
