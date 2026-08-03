@@ -108,6 +108,31 @@ final class MultiQueueReceiverTest extends AsyncTestCase
         $receiver->close();
     }
 
+    public function bufferedReceiveDeliversWhenOnlyALaterQueueHasWork(): void
+    {
+        $emails        = new InMemoryTransport(); // stays empty
+        $notifications = new InMemoryTransport();
+
+        $notifications->send(Envelope::wrap(new PingMessage()));
+
+        $receiver = new MultiQueueReceiver(
+            receivers: [
+                'emails'        => $emails,
+                'notifications' => $notifications,
+            ],
+            strategy:   new PriorityStrategy(),
+            priorities: ['emails' => 3, 'notifications' => 1],
+        );
+
+        // The buffered path hands the strategy a filtered state list, and a
+        // strategy that trips over its keys kills the producer coroutine.
+        $this->withWarningsAsErrors(static function () use ($receiver): void {
+            Assert::same($receiver->receive()?->last(QueueStamp::class)?->queue, 'notifications');
+        });
+
+        $receiver->close();
+    }
+
     public function returnsNullWhenAllQueuesEmpty(): void
     {
         $receiver = new MultiQueueReceiver(receivers: [

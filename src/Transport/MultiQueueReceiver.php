@@ -122,7 +122,6 @@ final class MultiQueueReceiver implements ReceiverInterface
 
     public function close(): void
     {
-        echo "CLOSE CALLED IN MultiQueueReceiver.php\n";
         $this->backgroundScope?->asNotSafely()->cancel();
         $this->notifications->close();
     }

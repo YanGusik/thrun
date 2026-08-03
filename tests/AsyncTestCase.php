@@ -45,6 +45,24 @@ abstract class AsyncTestCase
 //        Assert::same(count($coroutines), 1, 'zombie coroutines are expected');
     }
 
+    /**
+     * Runs the callback with every warning raised as an ErrorException, the way
+     * a framework error handler does. A test prints a warning and walks past it;
+     * an application under such a handler loses the coroutine that raised it.
+     */
+    protected function withWarningsAsErrors(callable $callback): void
+    {
+        set_error_handler(static function (int $severity, string $message, string $file, int $line): bool {
+            throw new \ErrorException($message, 0, $severity, $file, $line);
+        });
+
+        try {
+            $callback();
+        } finally {
+            restore_error_handler();
+        }
+    }
+
     protected function runWorkerAndWait(
         Worker $worker, InMemoryTransport $transport,
         ?int $expectedAcked = null, ?int $expectedRejected = null,
