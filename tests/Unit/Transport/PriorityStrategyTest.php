@@ -55,8 +55,9 @@ final class PriorityStrategyTest extends AsyncTestCase
     {
         $strategy = new PriorityStrategy();
 
-        // What MultiQueueReceiver hands over after array_filter() drops the empty
-        // queues: the survivors keep their original keys, so index 0 can be gone.
+        // What MultiQueueReceiver::pickFromBuffers() hands over after array_filter()
+        // drops the empty queues: the survivors keep their original keys, so index 0
+        // can be gone.
         $states = [1 => new QueueState(name: 'notifications', priority: 1, active: 0)];
 
         $this->withWarningsAsErrors(static function () use ($strategy, $states): void {
