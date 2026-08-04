@@ -9,7 +9,7 @@
     "ramsey/uuid": "^4.9"
   },
   "require-dev": {
-    "testo/testo": "^0.10.2"
+    "testo/testo": "^0.10.38"
   },
   "autoload": {
     "psr-4": {
@@ -28,5 +28,6 @@
     "sort-packages": true,
     "allow-plugins": {}
   },
-  "minimum-stability": "stable"
+  "minimum-stability": "dev",
+  "prefer-stable": true
 }

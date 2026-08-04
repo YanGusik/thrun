@@ -9,6 +9,8 @@ use Testo\Lifecycle\BeforeClass;
 use Testo\Lifecycle\BeforeTest;
 use Testo\Test;
 use Thrun\Envelope\Envelope;
+use Thrun\Envelope\Stamp\ErrorDetailsStamp;
+use Thrun\Envelope\UnprocessableMessage;
 use Thrun\Serialization\ClassMapMessageTypeResolver;
 use Thrun\Serialization\JsonSerializer;
 use Thrun\Envelope\Stamp\DelayStamp;
@@ -142,7 +144,7 @@ final class RedisTransportTest extends AsyncTestCase
         Assert::same($processingLen, 0);
     }
 
-    public function invalidPayloadMovesToFailed(): void
+    public function invalidPayloadIsWrappedAsUnprocessable(): void
     {
         // Push invalid JSON directly to ready
         self::$redis->rPush('thrun:test:default:ready', 'not valid json');
@@ -150,18 +152,29 @@ final class RedisTransportTest extends AsyncTestCase
         $transport = new RedisTransport($this->connection, $this->serializer, 'default');
         $envelope = $transport->tryReceive();
 
-        // Should return null because deserialization failed
-        Assert::same($envelope, null);
+        // A payload that fails to deserialize is handed over as an
+        // UnprocessableMessage carrying the raw text, instead of being dropped
+        // inside the transport.
+        Assert::instanceOf($envelope?->message, UnprocessableMessage::class);
+        Assert::same($envelope->message->rawPayload, 'not valid json');
+        Assert::same($envelope->message->queue, 'default');
 
-        $failedLen = self::$redis->lLen('thrun:test:default:failed');
-        Assert::same($failedLen, 1);
+        $error = $envelope->last(ErrorDetailsStamp::class);
+        Assert::instanceOf($error, ErrorDetailsStamp::class);
+        Assert::same($error->message !== '', true);
 
-        // Verify failed payload contains error info
-        $failedRaw = self::$redis->lPop('thrun:test:default:failed');
-        $failed = json_decode($failedRaw, true);
-        Assert::same($failed['payload'], 'not valid json');
-        Assert::same($failed['error'] !== '', true);
-        Assert::same(isset($failed['failedAt']), true);
+        // The raw payload travels on a RedisStamp, which is what ack() and
+        // reject() need to find the entry again.
+        $redisStamp = $envelope->last(RedisStamp::class);
+        Assert::instanceOf($redisStamp, RedisStamp::class);
+        Assert::same($redisStamp->rawPayload, 'not valid json');
+
+        // The transport no longer writes a failed list of its own; the entry
+        // stays in processing until the worker acks or rejects it.
+        Assert::same(self::$redis->lLen('thrun:test:default:failed'), 0);
+        Assert::same(self::$redis->lLen('thrun:test:default:processing'), 1);
+
+        $transport->reject($envelope);
     }
 
     public function closeStopsReceive(): void
