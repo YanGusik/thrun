@@ -46,9 +46,13 @@ abstract class AsyncTestCase
     }
 
     /**
-     * Runs the callback with every warning raised as an ErrorException, the way
-     * a framework error handler does. A test prints a warning and walks past it;
-     * an application under such a handler loses the coroutine that raised it.
+     * Runs the callback with everything PHP routes through the error handler —
+     * warning, notice, deprecation — rethrown as an ErrorException, the way a
+     * framework error handler does. The exception reaches the caller; the
+     * previous handler is restored either way.
+     *
+     * A test prints a warning and walks past it; an application under such a
+     * handler loses the coroutine that raised it.
      */
     protected function withWarningsAsErrors(callable $callback): void
     {

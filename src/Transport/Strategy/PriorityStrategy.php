@@ -18,9 +18,13 @@ final class PriorityStrategy implements SchedulingStrategyInterface
             return null;
         }
 
-        // accumulate credits proportional to priority
+        // Priorities are kept by name because the list may be keyed arbitrarily:
+        // MultiQueueReceiver::pickFromBuffers() filters it with array_filter(),
+        // which preserves the original keys. Any lookup by position reads the
+        // wrong entry, or none at all.
         $priorities = [];
 
+        // accumulate credits proportional to priority
         foreach ($queues as $state) {
             $priorities[$state->name]    = $state->priority;
             $this->credits[$state->name] = ($this->credits[$state->name] ?? 0.0) + $state->priority;

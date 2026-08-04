@@ -21,10 +21,14 @@ use Thrun\Envelope\Stamp\ErrorDetailsStamp;
 use Thrun\Envelope\Stamp\JobIdStamp;
 use Thrun\Envelope\Stamp\RedeliveryStamp;
 use Thrun\Envelope\Stamp\RetryStamp;
+use Thrun\Envelope\UnprocessableMessage;
 use Thrun\Worker\Metrics\NullMetrics;
 
 final class Worker
 {
+    /** How much of a corrupt payload reaches the error log when there is no failure transport. */
+    private const int UNPROCESSABLE_LOG_LIMIT = 2048;
+
     private bool $running = false;
     private Scope $mainScope;
     private ThreadPool $threadPool;
@@ -120,6 +124,12 @@ final class Worker
                     $envelope = $envelope->with(new JobIdStamp());
                 }
 
+                if ($envelope->message instanceof UnprocessableMessage
+                    && !isset($handlers[UnprocessableMessage::class])) {
+                    $this->discardUnprocessable($envelope);
+                    continue;
+                }
+
 //                var_dump($envelope, $resultChannel, $handlers, $middleware);
 
                 $this->threadPool->submit(static function () use ($envelope, $resultChannel, $handlers, $middleware) {
@@ -134,6 +144,61 @@ final class Worker
                 }
             }
         };
+    }
+
+    /**
+     * Disposes of a payload the transport could not deserialize.
+     *
+     * Such an envelope carries an UnprocessableMessage instead of the class the
+     * producer sent, so a handler lookup can only report a missing handler and
+     * bury the parse error the transport already recorded. The envelope never
+     * reaches a thread; it is rejected here, because a payload left in the
+     * transport's in-flight state comes back on every startup reclaim.
+     */
+    private function discardUnprocessable(Envelope $envelope): void
+    {
+        /** @var UnprocessableMessage $message */
+        $message = $envelope->message;
+        $error   = $envelope->last(ErrorDetailsStamp::class);
+
+        $this->metrics->incrementFailed();
+
+        if ($this->options->onResult !== null) {
+            ($this->options->onResult)([
+                'ok'             => false,
+                'envelope'       => $envelope,
+                'timedOut'       => false,
+                'error'          => $error instanceof ErrorDetailsStamp ? [
+                    'class'   => $error->exceptionClass,
+                    'message' => $error->message,
+                    'code'    => $error->code,
+                    'trace'   => $error->trace,
+                    'file'    => $error->file,
+                    'line'    => $error->line,
+                ] : null,
+                'processingTime' => 0.0,
+                'wasRetried'     => false,
+            ]);
+        }
+
+        $this->transport->reject($envelope);
+
+        if ($this->failureTransport !== null) {
+            // The parse error is already the envelope's only ErrorDetailsStamp,
+            // so it travels unchanged.
+            $this->failureTransport->send($envelope);
+
+            return;
+        }
+
+        // Past reject() this line holds the only remaining copy of the payload.
+        error_log(sprintf(
+            '[Worker] unprocessable payload on queue "%s": %s: %s; raw: %s',
+            $message->queue,
+            $error?->exceptionClass ?? 'unknown error',
+            $error?->message ?? '',
+            substr($message->rawPayload, 0, self::UNPROCESSABLE_LOG_LIMIT),
+        ));
     }
 
     private function resultReaderCoro(): Closure

@@ -133,6 +133,131 @@ final class MultiQueueReceiverTest extends AsyncTestCase
         $receiver->close();
     }
 
+    public function bufferedReceiveDeliversWhenOnlyTheFirstQueueHasWork(): void
+    {
+        $emails        = new InMemoryTransport();
+        $notifications = new InMemoryTransport(); // stays empty
+
+        $emails->send(Envelope::wrap(new PingMessage()));
+
+        $receiver = new MultiQueueReceiver(
+            receivers: [
+                'emails'        => $emails,
+                'notifications' => $notifications,
+            ],
+            strategy:   new PriorityStrategy(),
+            priorities: ['emails' => 3, 'notifications' => 1],
+        );
+
+        $this->withWarningsAsErrors(static function () use ($receiver): void {
+            Assert::same($receiver->receive()?->last(QueueStamp::class)?->queue, 'emails');
+        });
+
+        $receiver->close();
+    }
+
+    public function bufferedReceiveDeliversWhenOnlyTheLastOfThreeQueuesHasWork(): void
+    {
+        $emails        = new InMemoryTransport(); // stays empty
+        $notifications = new InMemoryTransport(); // stays empty
+        $laravelJobs   = new InMemoryTransport();
+
+        $laravelJobs->send(Envelope::wrap(new PingMessage()));
+
+        $receiver = new MultiQueueReceiver(
+            receivers: [
+                'emails'        => $emails,
+                'notifications' => $notifications,
+                'laravel_jobs'  => $laravelJobs,
+            ],
+            strategy:   new PriorityStrategy(),
+            priorities: ['emails' => 5, 'notifications' => 3, 'laravel_jobs' => 1],
+        );
+
+        // Two queues drop out of the filtered list, so the only survivor sits at
+        // key 2 and nothing occupies key 0.
+        $this->withWarningsAsErrors(static function () use ($receiver): void {
+            Assert::same($receiver->receive()?->last(QueueStamp::class)?->queue, 'laravel_jobs');
+        });
+
+        $receiver->close();
+    }
+
+    public function bufferedReceiveDeliversOnEqualPriorities(): void
+    {
+        $emails      = new InMemoryTransport(); // stays empty
+        $laravelJobs = new InMemoryTransport();
+
+        $laravelJobs->send(Envelope::wrap(new PingMessage()));
+
+        $receiver = new MultiQueueReceiver(
+            receivers: [
+                'emails'       => $emails,
+                'laravel_jobs' => $laravelJobs,
+            ],
+            strategy:   new PriorityStrategy(),
+            priorities: ['emails' => 1, 'laravel_jobs' => 1],
+        );
+
+        // Equal priorities make every credit equal, so the winner comes down to
+        // iteration order over a list whose first key is no longer 0.
+        $this->withWarningsAsErrors(static function () use ($receiver): void {
+            Assert::same($receiver->receive()?->last(QueueStamp::class)?->queue, 'laravel_jobs');
+        });
+
+        $receiver->close();
+    }
+
+    public function bufferedReceiveDeliversEveryMessageOfASurvivingQueue(): void
+    {
+        $emails      = new InMemoryTransport(); // stays empty
+        $laravelJobs = new InMemoryTransport();
+
+        for ($i = 0; $i < 4; $i++) {
+            $laravelJobs->send(Envelope::wrap(new PingMessage()));
+        }
+
+        $receiver = new MultiQueueReceiver(
+            receivers: [
+                'emails'       => $emails,
+                'laravel_jobs' => $laravelJobs,
+            ],
+            strategy:   new PriorityStrategy(),
+            priorities: ['emails' => 3, 'laravel_jobs' => 1],
+        );
+
+        $this->withWarningsAsErrors(static function () use ($receiver): void {
+            for ($i = 0; $i < 4; $i++) {
+                Assert::same($receiver->receive()?->last(QueueStamp::class)?->queue, 'laravel_jobs');
+            }
+        });
+
+        $receiver->close();
+    }
+
+    public function bufferedRoundRobinDeliversWhenOnlyALaterQueueHasWork(): void
+    {
+        $emails        = new InMemoryTransport(); // stays empty
+        $notifications = new InMemoryTransport(); // stays empty
+        $laravelJobs   = new InMemoryTransport();
+
+        $laravelJobs->send(Envelope::wrap(new PingMessage()));
+
+        // Default strategy, same filtered list: round-robin reindexes before it
+        // reads, and must keep doing so.
+        $receiver = new MultiQueueReceiver(receivers: [
+            'emails'        => $emails,
+            'notifications' => $notifications,
+            'laravel_jobs'  => $laravelJobs,
+        ]);
+
+        $this->withWarningsAsErrors(static function () use ($receiver): void {
+            Assert::same($receiver->receive()?->last(QueueStamp::class)?->queue, 'laravel_jobs');
+        });
+
+        $receiver->close();
+    }
+
     public function returnsNullWhenAllQueuesEmpty(): void
     {
         $receiver = new MultiQueueReceiver(receivers: [
