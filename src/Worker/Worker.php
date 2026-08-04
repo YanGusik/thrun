@@ -30,6 +30,10 @@ final class Worker
     private const int UNPROCESSABLE_LOG_LIMIT = 2048;
 
     private bool $running = false;
+
+    /** Messages handed to the pool whose result has not been applied to the transport yet. */
+    private int $inFlight = 0;
+
     private Scope $mainScope;
     private ThreadPool $threadPool;
     private TaskSet $taskSet;
@@ -100,9 +104,18 @@ final class Worker
         $this->resultChannel?->close();
     }
 
+    /**
+     * True once every message the worker took has been acked or rejected.
+     *
+     * The pool reports a task complete as soon as the thread pushed its result
+     * into the channel, which is before the reader applied it. Counting the
+     * results still on their way keeps a caller from stopping the worker over
+     * one of them - stop() closes the channel, and an unread result is lost.
+     */
     public function isIdle(): bool
     {
-        return $this->threadPool->getPendingCount() === 0
+        return $this->inFlight === 0
+            && $this->threadPool->getPendingCount() === 0
             && $this->threadPool->getRunningCount() === 0
             && $this->threadPool->getCompletedCount() > 0;
     }
@@ -131,6 +144,8 @@ final class Worker
                 }
 
 //                var_dump($envelope, $resultChannel, $handlers, $middleware);
+
+                $this->inFlight++;
 
                 $this->threadPool->submit(static function () use ($envelope, $resultChannel, $handlers, $middleware) {
                     new WorkerThread($envelope, $resultChannel, $handlers, $middleware)->run();
@@ -209,51 +224,57 @@ final class Worker
                 $result = $this->resultChannel->recv();
 
 //                protect(function () use ($result) {
-                    $this->metrics->decrementActive();
+                    try {
+                        $this->metrics->decrementActive();
 
-                    if ($this->options->onResult !== null) {
-                        ($this->options->onResult)($result);
-                    }
-
-                    $this->metrics->recordProcessingTime($result['processingTime'] ?? 0);
-
-                    if ($result['ok']) {
-                        $this->metrics->incrementProcessed();
-                        $this->transport->ack($result['envelope']);
-                    } else {
-                        $this->metrics->incrementFailed();
-
-                        if ($result['timedOut'] ?? false) {
-                            $this->metrics->incrementTimedOut();
+                        if ($this->options->onResult !== null) {
+                            ($this->options->onResult)($result);
                         }
 
-                        $error      = null;
-                        $errorStamp = null;
-                        if (isset($result['error']['class'])) {
-                            $error      = new \RuntimeException(
-                                sprintf('[%s] %s', $result['error']['class'], $result['error']['message']),
-                                $result['error']['code'] ?? 0,
+                        $this->metrics->recordProcessingTime($result['processingTime'] ?? 0);
+
+                        if ($result['ok']) {
+                            $this->metrics->incrementProcessed();
+                            $this->transport->ack($result['envelope']);
+                        } else {
+                            $this->metrics->incrementFailed();
+
+                            if ($result['timedOut'] ?? false) {
+                                $this->metrics->incrementTimedOut();
+                            }
+
+                            $error      = null;
+                            $errorStamp = null;
+                            if (isset($result['error']['class'])) {
+                                $error      = new \RuntimeException(
+                                    sprintf('[%s] %s', $result['error']['class'], $result['error']['message']),
+                                    $result['error']['code'] ?? 0,
+                                );
+                                $errorStamp = new ErrorDetailsStamp(
+                                    exceptionClass: $result['error']['class'],
+                                    message: $result['error']['message'],
+                                    code: $result['error']['code'] ?? 0,
+                                    trace: $result['error']['trace'],
+                                    file: $result['error']['file'] ?? null,
+                                    line: $result['error']['line'] ?? null,
+                                );
+                            }
+
+                            $wasRetried = $this->handleFailure(
+                                $result['envelope'],
+                                $error,
+                                $errorStamp,
+                                $result['retryDelayMs'] ?? null,
                             );
-                            $errorStamp = new ErrorDetailsStamp(
-                                exceptionClass: $result['error']['class'],
-                                message: $result['error']['message'],
-                                code: $result['error']['code'] ?? 0,
-                                trace: $result['error']['trace'],
-                                file: $result['error']['file'] ?? null,
-                                line: $result['error']['line'] ?? null,
-                            );
-                        }
 
-                        $wasRetried = $this->handleFailure(
-                            $result['envelope'],
-                            $error,
-                            $errorStamp,
-                            $result['retryDelayMs'] ?? null,
-                        );
-
-                        if ($wasRetried) {
-                            $this->metrics->incrementRetried();
+                            if ($wasRetried) {
+                                $this->metrics->incrementRetried();
+                            }
                         }
+                    } finally {
+                        // Counted down only here: until the transport has been
+                        // told, the message is still the worker's business.
+                        $this->inFlight = max(0, $this->inFlight - 1);
                     }
 //                });
             }
