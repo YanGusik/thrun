@@ -108,9 +108,8 @@ final class Worker
      * True once every message the worker took has been acked or rejected.
      *
      * The pool reports a task complete as soon as the thread pushed its result
-     * into the channel, which is before the reader applied it. Counting the
-     * results still on their way keeps a caller from stopping the worker over
-     * one of them - stop() closes the channel, and an unread result is lost.
+     * into the channel, which is before the reader applied it. A caller that
+     * stops the worker over such a result loses it: stop() closes the channel.
      */
     public function isIdle(): bool
     {
@@ -291,7 +290,16 @@ final class Worker
      */
     private function countOutcome(array $result): void
     {
-        $outcome = Outcome::tryFrom($result['outcome'] ?? '') ?? Outcome::Success;
+        $reported = $result['outcome'] ?? Outcome::Success->value;
+        $outcome  = Outcome::tryFrom($reported);
+
+        if ($outcome === null) {
+            // Only a thread on a different version can report one, and counting
+            // it silently would hide that behind plausible numbers.
+            error_log(sprintf('[Worker] unknown outcome "%s"; counted as processed', $reported));
+
+            $outcome = Outcome::Success;
+        }
 
         switch ($outcome) {
             case Outcome::Success:

@@ -28,13 +28,11 @@ final class Acknowledger
      *
      * For a handler that settled the message itself - a framework adapter whose
      * framework already recorded the failure and scheduled its own retry. The
-     * worker records the outcome and acknowledges the message, but does not
-     * reject it, does not store it and does not build a retry copy; fail() and
-     * retry() are the other half, they ask for exactly that.
+     * worker counts the outcome and acknowledges the message; rejecting, storing
+     * and retrying are what fail() and retry() ask for.
      *
-     * An observed outcome wins over a later fail() or retry(): it says the
-     * message is already settled, and acting on a settled message duplicates
-     * whatever settled it.
+     * An observed outcome wins over a later fail() or retry(): acting on a
+     * settled message duplicates whatever settled it.
      */
     public function observe(Outcome $outcome, ?\Throwable $error = null): void
     {
