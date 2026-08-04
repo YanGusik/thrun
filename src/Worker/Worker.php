@@ -295,9 +295,8 @@ final class Worker
         $outcome  = Outcome::tryFrom($reported);
 
         if ($outcome === null) {
-            // Only a thread running a different version of this code can report
-            // an outcome this one does not know. Counting it silently would hide
-            // the mismatch behind numbers that look plausible.
+            // Only a thread on a different version can report one, and counting
+            // it silently would hide that behind plausible numbers.
             error_log(sprintf('[Worker] unknown outcome "%s"; counted as processed', $reported));
 
             $outcome = Outcome::Success;
