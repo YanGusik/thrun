@@ -14,12 +14,36 @@ final class Acknowledger
     private bool $timedOut = false;
     private int $retryDelayMs = 0;
     private ?\Throwable $failureError = null;
+    private ?Outcome $observed = null;
 
     public function __construct(public readonly Envelope $envelope) {}
 
     public function ack(): void
     {
         $this->acked = true;
+    }
+
+    /**
+     * Report what became of the message without asking the worker to act on it.
+     *
+     * For a handler that settled the message itself - a framework adapter whose
+     * framework already recorded the failure and scheduled its own retry. The
+     * worker records the outcome and acknowledges the message, but does not
+     * reject it, does not store it and does not build a retry copy; fail() and
+     * retry() are the other half, they ask for exactly that.
+     *
+     * An observed outcome wins over a later fail() or retry(): it says the
+     * message is already settled, and acting on a settled message duplicates
+     * whatever settled it.
+     */
+    public function observe(Outcome $outcome, ?\Throwable $error = null): void
+    {
+        $this->observed = $outcome;
+        $this->acked    = true;
+
+        if ($error !== null) {
+            $this->failureError = $error;
+        }
     }
 
     public function retry(int $delayMs = 0): void
@@ -67,5 +91,10 @@ final class Acknowledger
     public function getFailureError(): ?\Throwable
     {
         return $this->failureError;
+    }
+
+    public function getObservedOutcome(): ?Outcome
+    {
+        return $this->observed;
     }
 }

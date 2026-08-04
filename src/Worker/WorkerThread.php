@@ -135,6 +135,23 @@ final class WorkerThread
     private function sendResult(Envelope $envelope, Acknowledger $ack, float $processingTime): void
     {
         try {
+            // An observed outcome says the handler settled the message itself:
+            // the message is acknowledged and only its outcome is reported.
+            if (($observed = $ack->getObservedOutcome()) !== null) {
+                $failure = $ack->getFailureError();
+
+                $this->resultChannel->send([
+                    'ok'             => true,
+                    'outcome'        => $observed->value,
+                    'envelope'       => $envelope,
+                    'timedOut'       => $ack->isTimedOut(),
+                    'error'          => $failure !== null ? $this->convertThrowableToArray($failure) : null,
+                    'processingTime' => $processingTime,
+                ]);
+
+                return;
+            }
+
             if ($ack->isRetried()) {
                 $throwable = $ack->getFailureError() ?? new \RuntimeException('Retry requested by handler');
                 $this->resultChannel->send([
