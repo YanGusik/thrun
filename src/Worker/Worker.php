@@ -234,7 +234,7 @@ final class Worker
                         $this->metrics->recordProcessingTime($result['processingTime'] ?? 0);
 
                         if ($result['ok']) {
-                            $this->metrics->incrementProcessed();
+                            $this->countOutcome($result);
                             $this->transport->ack($result['envelope']);
                         } else {
                             $this->metrics->incrementFailed();
@@ -279,6 +279,41 @@ final class Worker
 //                });
             }
         };
+    }
+
+    /**
+     * Counts a message the handler acknowledged.
+     *
+     * A result without an outcome comes from a plain ack() and counts as
+     * processed, which is what every handler written before observe() gets.
+     *
+     * @param array{outcome?: string, timedOut?: bool} $result
+     */
+    private function countOutcome(array $result): void
+    {
+        $outcome = Outcome::tryFrom($result['outcome'] ?? '') ?? Outcome::Success;
+
+        switch ($outcome) {
+            case Outcome::Success:
+                $this->metrics->incrementProcessed();
+                break;
+
+            case Outcome::Failure:
+                $this->metrics->incrementFailed();
+
+                if ($result['timedOut'] ?? false) {
+                    $this->metrics->incrementTimedOut();
+                }
+                break;
+
+            case Outcome::Retried:
+                $this->metrics->incrementRetried();
+                break;
+
+            case Outcome::Skipped:
+                // Nobody ran the message: the handler walked away from it.
+                break;
+        }
     }
 
     private function handleFailure(
