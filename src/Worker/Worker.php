@@ -291,7 +291,17 @@ final class Worker
      */
     private function countOutcome(array $result): void
     {
-        $outcome = Outcome::tryFrom($result['outcome'] ?? '') ?? Outcome::Success;
+        $reported = $result['outcome'] ?? Outcome::Success->value;
+        $outcome  = Outcome::tryFrom($reported);
+
+        if ($outcome === null) {
+            // Only a thread running a different version of this code can report
+            // an outcome this one does not know. Counting it silently would hide
+            // the mismatch behind numbers that look plausible.
+            error_log(sprintf('[Worker] unknown outcome "%s"; counted as processed', $reported));
+
+            $outcome = Outcome::Success;
+        }
 
         switch ($outcome) {
             case Outcome::Success:
