@@ -66,6 +66,61 @@ final class PriorityStrategyTest extends AsyncTestCase
         });
     }
 
+    public function picksTheHighestPriorityFromASparseStateList(): void
+    {
+        $strategy = new PriorityStrategy();
+
+        // Three configured queues, the first one filtered out.
+        $states = [
+            1 => new QueueState(name: 'notifications', priority: 3, active: 0),
+            2 => new QueueState(name: 'laravel_jobs', priority: 1, active: 0),
+        ];
+
+        $this->withWarningsAsErrors(static function () use ($strategy, $states): void {
+            Assert::same($strategy->next($states), 'notifications');
+        });
+    }
+
+    public function cyclesEqualPrioritiesOnASparseStateList(): void
+    {
+        $strategy = new PriorityStrategy();
+
+        $states = [
+            2 => new QueueState(name: 'a', priority: 2, active: 0),
+            3 => new QueueState(name: 'b', priority: 2, active: 0),
+        ];
+
+        // Equal credits leave the winner to the first entry in iteration order,
+        // whatever key it carries.
+        $this->withWarningsAsErrors(static function () use ($strategy, $states): void {
+            Assert::same($strategy->next($states), 'a');
+            Assert::same($strategy->next($states), 'b');
+            Assert::same($strategy->next($states), 'a');
+        });
+    }
+
+    public function keepsPriorityRatioWhenTheStateListIsSparse(): void
+    {
+        $strategy = new PriorityStrategy();
+
+        $states = [
+            1 => new QueueState(name: 'emails', priority: 3, active: 0),
+            2 => new QueueState(name: 'laravel_jobs', priority: 1, active: 0),
+        ];
+
+        $order = [];
+        $this->withWarningsAsErrors(static function () use ($strategy, $states, &$order): void {
+            for ($i = 0; $i < 8; $i++) {
+                $order[] = $strategy->next($states);
+            }
+        });
+
+        Assert::same($order, [
+            'emails', 'emails', 'emails', 'laravel_jobs',
+            'emails', 'emails', 'emails', 'laravel_jobs',
+        ]);
+    }
+
     public function returnsNullForEmptyArray(): void
     {
         $strategy = new PriorityStrategy();
