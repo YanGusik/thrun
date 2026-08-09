@@ -1,8 +1,5 @@
 # Thrun
 
-> **⚠️ Work in progress**  
-> This library is actively developed. APIs may change between commits.
-
 Async queue worker for PHP built on [TrueAsync](https://github.com/true-async) — an alternative PHP core that implements true asynchrony by modifying the Zend engine, I/O libraries, database and socket handling.
 
 ## Goal
